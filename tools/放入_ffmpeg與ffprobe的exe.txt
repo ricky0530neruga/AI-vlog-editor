@@ -1,0 +1,2 @@
+請將 Windows 版本的 ffmpeg.exe 和 ffprobe.exe 放在此資料夾。
+執行 build_windows.bat 後會自動複製到 EXE 發行資料夾。
