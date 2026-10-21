@@ -199,12 +199,15 @@ class Application:
         self.filter_box=ttk.Combobox(filterline,textvariable=self.candidate_filter,values=['全部','已完成 AI','尚未分析','預篩跳過','分析失敗','高分（70 以上）'],state='readonly',width=15)
         self.filter_box.pack(side='left',padx=4)
         ttk.Button(filterline,text='搜尋',command=lambda:self.load_candidates(reset=True)).pack(side='left')
-        self.available=ttk.Treeview(avail,columns=('flag','status','score','kind','time','name'),show='headings',height=12,selectmode='extended')
+        # The Treeview must be a child of the frame that packs it.
+        # Using pack(in_=bar) on a Treeview created under `avail` can
+        # leave the container visually above it on Windows/Tk.
+        bar=ttk.Frame(avail);bar.pack(fill='both',expand=True,pady=(5,0))
+        self.available=ttk.Treeview(bar,columns=('flag','status','score','kind','time','name'),show='headings',height=12,selectmode='extended')
         for col,title,width in [('flag','片單',45),('status','分析狀態',79),('score','AI 分數',65),('kind','類型',48),('time','位置',60),('name','來源檔案',200)]:
             self.available.heading(col,text=title)
             self.available.column(col,width=width,anchor='w',stretch=col=='name')
-        bar=ttk.Frame(avail);bar.pack(fill='both',expand=True,pady=(5,0))
-        self.available.pack(in_=bar,side='left',fill='both',expand=True)
+        self.available.pack(side='left',fill='both',expand=True)
         sc=ttk.Scrollbar(bar,orient='vertical',command=self.available.yview);sc.pack(side='right',fill='y')
         self.available.configure(yscrollcommand=sc.set)
         self.available.bind('<<TreeviewSelect>>',self.on_available_select)
@@ -213,12 +216,12 @@ class Application:
         ttk.Button(ops,text='◀ 上一頁',command=lambda:self.page_by(-1)).pack(side='right')
         ttk.Button(ops,text='下一頁 ▶',command=lambda:self.page_by(1)).pack(side='right',padx=5)
         self.page_label=ttk.Label(avail,text='');self.page_label.pack(anchor='w')
-        self.plan_tree=ttk.Treeview(curated,columns=('n','score','time','name'),show='headings',height=12,selectmode='extended')
+        wrap=ttk.Frame(curated);wrap.pack(fill='both',expand=True)
+        self.plan_tree=ttk.Treeview(wrap,columns=('n','score','time','name'),show='headings',height=12,selectmode='extended')
         for col,title,width in [('n','#',28),('score','分數',44),('time','長度',59),('name','選定鏡頭',200)]:
             self.plan_tree.heading(col,text=title)
             self.plan_tree.column(col,width=width,stretch=col=='name')
-        wrap=ttk.Frame(curated);wrap.pack(fill='both',expand=True)
-        self.plan_tree.pack(in_=wrap,side='left',fill='both',expand=True)
+        self.plan_tree.pack(side='left',fill='both',expand=True)
         sc2=ttk.Scrollbar(wrap,orient='vertical',command=self.plan_tree.yview)
         sc2.pack(side='right',fill='y');self.plan_tree.config(yscrollcommand=sc2.set)
         self.plan_tree.bind('<<TreeviewSelect>>',self.on_plan_select)
