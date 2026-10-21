@@ -146,3 +146,59 @@ AI Travel Vlog Maker V4 使用與移機手冊（繁體中文）
 - 已有的 V4.2 分析快取可以保留；更新不要求重新跑 Ollama，除非素材/模型設定有變。
 - FFmpeg 的實際輸出時長可能因影格與 AAC 編碼有小幅誤差；素材不足時不會無限延長填滿 180 秒。
 - 建議先用 30 秒小測試確認音畫與轉場正常，再大量素材正式渲染。
+
+
+=== V4.4：Windows GUI 完整化（2026-10-21）===
+【此版只需覆蓋 vlog_gui.py、vlog_maker.py、man.txt，新增 CHANGELOG_V4_4.txt。】
+不必重設 Ollama、重抓模型、重掃已有的素材或刪除舊版 SQLite 資料庫。
+原有 cinematic_editor.py、app.py、start_gui.bat、自動安裝與 build_windows.bat 均保持不變。
+
+一、介面四個頁籤
+ ① 專案設定：加入多個檔案/資料夾、輸出位置、背景音樂、Gemma 模型、片長、最低分、
+              balanced/quality、cpu/standard、測試模式、淡化/現場聲/近似節奏同步。
+ ② AI 素材審核：候選片段分頁查看，顯示評分、事件分數、來源、描述、影格縮圖；
+              可搜尋、查看分析失敗，選取後排除單一候選片段或整個來源檔案。
+ ③ 剪輯順序預覽：從既有評分和排除設定產生估算時間軸；
+              可檢視開場/旅程/高潮/結尾、片段秒數、來源、描述，排除選取鏡頭。
+ ④ 執行紀錄：顯示每階段命令列輸出、當前進度和（若有）AI 估計剩餘時間。
+
+二、最實用的新流程
+ 1. 在「專案設定」按「一鍵掃描 + AI 分析 + 輸出」，完成首次剪輯。
+ 2. 切換至「AI 素材審核」，查看 AI 的分數與縮圖。
+ 3. 如果某個候選鏡頭很無聊，選取該列 → 「排除選取鏡頭／取消排除」。
+    若同一個來源檔案完全不想用，點「排除整個來源檔案／取消」。
+    排除設定存於工作區 ui_review_v44.json，不刪除素材，也不修改 AI 評分。
+ 4. 切到「剪輯順序預覽」，按「產生／更新剪輯預覽」，產生 edit_plan_preview_v44.json。
+ 5. 檢查鏡頭順序後按「只重新剪輯輸出」，直接使用舊 AI 快取，跳過 scan/analyze。
+    完成檔案仍為 Travel_Vlog_Final_V43.mp4（沿用 V4.3 的電影感剪輯引擎）。
+ 6. 重要：修改排除或最低分後，舊預覽不會自動更新；請重新按預覽。
+
+三、縮圖與播放限制
+ - 縮圖是在使用者點選候選片段時才按需擷取 PNG；會快取在 ui_thumbnails_v44 資料夾。
+ - 「以系統播放器開啟原始檔」會呼叫 Windows 預設影片或照片軟體，並非 GUI 內嵌播放器。
+ - 大量候選素材使用每頁 120 筆的 SQL 分頁，不會整批讀入 Tkinter。
+ - 預覽是「選片計畫」，不是事先渲染完成的影片，交叉淡化/節奏微調會影響實際片長。
+
+四、可選的命令列用法
+ 預覽（不重新分析）：
+ py vlog_maker.py plan --out "C:\Users\SCE\Desktop\Vlogwork\AI_Vlog_工作區ID" --seconds 180 --min-score 40
+ 套用排除：
+ py vlog_maker.py plan --out "C:\Users\SCE\Desktop\Vlogwork\AI_Vlog_工作區ID" --seconds 180 --review-file "C:\Users\SCE\Desktop\Vlogwork\AI_Vlog_工作區ID\ui_review_v44.json"
+ 真正輸出：把 plan 換成 render；加 --music 可以提供有授權的音樂檔。
+
+五、手動必須完成的步驟
+ - Git 專案先切到 feature/v4.4-gui 分支，再覆蓋更新檔案。若自己已修改舊 GUI 文字，
+   先看 Antigravity / Git Diff，把自訂用語合併進新版，切勿不備份直接覆蓋。
+ - Python 原始碼模式雙擊原有 start_gui.bat 即可；無需重新安裝 Python 套件。
+ - 若使用以前已打包的 EXE：必須重新執行原有 build_windows.bat 或一鍵安裝並打包.bat。
+ - 搬到別台電腦，仍需要能使用的 FFmpeg、Ollama 與已下載的視覺模型。
+ - 首次使用者自行選取輸入/輸出資料夾（預設舊教室路徑在其他電腦上可能不存在）。
+
+六、注意與保護
+ - 本版只讀取來源影片/照片；不會改動、搬移、刪除原始素材。
+ - ui_review_v44.json / edit_plan_preview_v44.json 等檔案只寫到輸出工作區。
+ - SQLite 的 AI 評分和 V4.2/V4.3 已完成的分析快取保留。
+ - 手動排除只會減少選用素材，不能保證三分鐘一定夠用。
+ - 分析進度是階段性估算，不是精準的全程進度；Ollama CPU 推論速度仍視硬體而定。
+ - 開發期間已在 Linux + Xvfb 測試 GUI 啟動、SQLite 分頁、排除與 FFmpeg 渲染。
+   尚未在使用者 Windows 電腦做 EXE/GUI 的正式實機驗證。

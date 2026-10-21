@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AI Travel Vlog V4.3: local, resumable, source files always read-only. Python >=3.10."""
+"""AI Travel Vlog V4.4: V4.3 rendering + optional GUI review exclusions."""
 import argparse
 import base64
 import datetime as dt
@@ -28,7 +28,7 @@ VIDEOS={'.mp4','.mov','.m4v','.avi','.mkv','.webm','.mts','.m2ts'}
 PHOTOS={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
 DEFAULT_IN=r'C:\Users\SCE\Desktop\Travel1'
 DEFAULT_OUT=r'C:\Users\SCE\Desktop\Vlogwork'
-VERSION='4.3'
+VERSION='4.4'
 
 def command(cmd, capture=False, binary=False):
     p=subprocess.run([exe(str(x)) if str(x) in ('ffmpeg','ffprobe') else str(x) for x in cmd], stdin=subprocess.DEVNULL,
@@ -279,13 +279,17 @@ def distance(a,b):
     try:return (int(a,16)^int(b,16)).bit_count()
     except ValueError:return 64
 
-def choose(db,target,shot,min_score):
+def choose(db,target,shot,min_score,excluded_ids=None,excluded_paths=None):
     db.row_factory=sqlite3.Row
     rows=[dict(x) for x in db.execute('''SELECT c.id,c.path,c.position,c.score,c.description,c.phash,
       c.category,c.role,c.event,c.people,m.kind,m.duration,m.mtime,m.taken
       FROM candidates c JOIN media m ON m.path=c.path WHERE c.v2=1 AND c.score>=?
       ORDER BY COALESCE(m.taken,m.mtime),c.path,c.position''',(min_score,))]
     db.row_factory=None
+    excluded_ids=set(excluded_ids or ())
+    excluded_paths=set(excluded_paths or ())
+    # Exclusions affect selection only: scores/cache in SQLite remain unchanged.
+    rows=[r for r in rows if r['id'] not in excluded_ids and r['path'] not in excluded_paths]
     if not rows:return []
     # Windows modified timestamps are fallback only; do not claim they establish trip chronology.
     for r in rows:
@@ -358,15 +362,15 @@ def choose(db,target,shot,min_score):
         seconds=round(seconds,3)
         if seconds<0.4:continue
         start=round(max(0.,min(float(r['duration'])-seconds,r['position']-seconds/2)),3) if r['kind']=='video' else 0.
-        plan.append({'path':r['path'],'kind':r['kind'],'start':start,'seconds':seconds,
+        plan.append({'candidate_id':r['id'],'path':r['path'],'kind':r['kind'],'start':start,'seconds':seconds,
                      'score':r['score'],'event':r['event'],'category':r['category'],
                      'description':r['description'],'people':r.get('people'),
                      'source_duration':r['duration'],'candidate_position':r['position'],
                      'role':('opening' if r is opening else 'highlight' if r is climax else 'ending' if r is ending else 'journey')})
     return plan
 
-def render(db,out,target,shot,minimum,music,crf,force,cinematic=True,transition=True,preserve_audio=True,beat_sync=True):
-    plan=choose(db,target,shot,minimum)
+def render(db,out,target,shot,minimum,music,crf,force,cinematic=True,transition=True,preserve_audio=True,beat_sync=True,excluded_ids=None,excluded_paths=None):
+    plan=choose(db,target,shot,minimum,excluded_ids,excluded_paths)
     if cinematic:
         from cinematic_editor import render_v43
         return render_v43(plan,out,target,music,crf,force,transition,preserve_audio,beat_sync)
@@ -409,7 +413,7 @@ def render(db,out,target,shot,minimum,music,crf,force,cinematic=True,transition=
 
 def main():
     p=argparse.ArgumentParser(description='AI Vlog V4.3, Windows 1080p 16:9, no subtitles; original files preserved.')
-    p.add_argument('stage',choices=['scan','analyze','render','all'])
+    p.add_argument('stage',choices=['scan','analyze','plan','render','all'])
     p.add_argument('--input',action='append',default=[])
     p.add_argument('--out',type=Path,default=Path(DEFAULT_OUT))
     p.add_argument('--model',default='gemma3:12b')
@@ -433,6 +437,7 @@ def main():
     p.add_argument('--no-beat-sync',action='store_true',help='Disable approximate music onset alignment')
     p.add_argument('--retry',action='store_true',help='re-analyze previously analyzed frames')
     p.add_argument('--force',action='store_true',help='force re-encode cached clips')
+    p.add_argument('--review-file',type=Path,help='optional V4.4 user review JSON containing excluded_ids and excluded_paths')
     a=p.parse_args()
     if not all(shutil.which(name) or (FFMPEG_DIR/(name+'.exe')).is_file() for name in ('ffmpeg','ffprobe')):p.error('請在 tools 資料夾放入 ffmpeg.exe / ffprobe.exe，或將 FFmpeg 加入 PATH')
     if a.seconds<1 or a.shot<1 or a.step<=0 or a.max_per_video<1:p.error('Invalid duration/step')
@@ -443,10 +448,29 @@ def main():
             scan(db,[Path(x) for x in (a.input or [DEFAULT_IN])],out,a.scan_limit)
             print('Indexed:',db.execute('SELECT count(*) FROM media WHERE error IS NULL').fetchone()[0])
         if a.stage in ('analyze','all'):analyze(db,out,a.model,a.analyze_limit,a.step,a.max_per_video,a.retry,not a.single_frame,a.analysis_mode,a.fast_model,a.ai_timeout,a.hardware_profile)
+        excluded_ids=set(); excluded_paths=set()
+        if a.review_file and a.stage in ('plan','render','all'):
+            if not a.review_file.is_file():
+                p.error('Review file not found: '+str(a.review_file))
+            review=json.loads(a.review_file.read_text(encoding='utf-8'))
+            if not isinstance(review,dict):raise ValueError('review JSON must be an object')
+            for key in ('excluded_ids','excluded_paths'):
+                if not isinstance(review.get(key,[]),list):raise ValueError(key+' must be a list')
+            excluded_ids=set(str(x) for x in review.get('excluded_ids',[]))
+            excluded_paths=set(str(x) for x in review.get('excluded_paths',[]))
+            print(f'[V4.4 REVIEW] 排除 {len(excluded_ids)} 個候選、{len(excluded_paths)} 個來源',flush=True)
+        if a.stage=='plan':
+            plan=choose(db,a.seconds,a.shot,a.min_score,excluded_ids,excluded_paths)
+            report={'version':'4.4-preview','target_seconds':a.seconds,'plan':plan,
+                    'note':'Approximate pre-render plan. V4.3 fades and music can adjust final clip durations.'}
+            dest=out/'edit_plan_preview_v44.json'
+            dest.write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+            print(f'[V4.4 PLAN] {len(plan)} 個鏡頭：{dest}',flush=True)
         if a.stage in ('render','all'):
             if a.music and not a.music.is_file():p.error('Music file not found')
             render(db,out,a.seconds,a.shot,a.min_score,a.music,a.crf,a.force,
-                   not a.classic_render,not a.no_dissolve,not a.no_ambient,not a.no_beat_sync)
+                   not a.classic_render,not a.no_dissolve,not a.no_ambient,not a.no_beat_sync,
+                   excluded_ids,excluded_paths)
     finally:db.close()
 if __name__=='__main__':
     try:main()
