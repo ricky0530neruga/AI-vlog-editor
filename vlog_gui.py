@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tkinter frontend for AI Vlog Maker V2. Python standard library only."""
+"""Tkinter frontend for AI Vlog Maker V4.3. Python standard library only."""
 import hashlib
 import json
 import os
@@ -21,7 +21,7 @@ EXTENSIONS = '.mp4 .mov .m4v .avi .mkv .webm .mts .m2ts .jpg .jpeg .png .webp .b
 class Application:
     def __init__(self, master):
         self.master = master
-        master.title('AI Travel Vlog V4.1 — 自動剪輯控制台')
+        master.title('AI Travel Vlog V4.3 — 自動剪輯控制台')
         master.geometry('850x690')
         master.minsize(710, 570)
         self.events = queue.Queue()
@@ -37,6 +37,9 @@ class Application:
         self.temporal = tk.BooleanVar(value=True)
         self.analysis_mode = tk.StringVar(value='balanced')
         self.hardware_profile = tk.StringVar(value='cpu')
+        self.dissolve = tk.BooleanVar(value=True)
+        self.ambient = tk.BooleanVar(value=True)
+        self.beat_sync = tk.BooleanVar(value=True)
         self.result_dir = None
         self.build()
         self.load()
@@ -46,7 +49,7 @@ class Application:
     def build(self):
         pad = ttk.Frame(self.master, padding=14)
         pad.pack(fill='both', expand=True)
-        ttk.Label(pad, text='AI Travel Vlog V4.1', font=('Segoe UI', 18, 'bold')).pack(anchor='w')
+        ttk.Label(pad, text='AI Travel Vlog V4.3', font=('Segoe UI', 18, 'bold')).pack(anchor='w')
         ttk.Label(pad, text='選擇多個資料夾或個別照片／影片；原始檔案只讀取，不會覆寫。').pack(anchor='w', pady=(1, 12))
         frm = ttk.LabelFrame(pad, text='1. 旅遊素材（可混合多個檔案與資料夾）', padding=8)
         frm.pack(fill='both', expand=False)
@@ -86,6 +89,11 @@ class Application:
         ttk.Label(f2,text='硬體效能設定').grid(row=7,column=0,sticky='w')
         ttk.Combobox(f2,textvariable=self.hardware_profile,values=['cpu','standard'],state='readonly',width=14).grid(row=7,column=1,sticky='w',padx=8)
         ttk.Label(f2, text='balanced：CPU 約 8% 複審／standard 約 20%；quality：12B 全部分析',foreground='#666').grid(row=8,column=0,columnspan=3,sticky='w')
+        v43_opts=ttk.Frame(f2)
+        v43_opts.grid(row=9,column=0,columnspan=3,sticky='w',pady=(7,0))
+        ttk.Checkbutton(v43_opts,text='鏡頭交叉淡化',variable=self.dissolve).pack(side='left')
+        ttk.Checkbutton(v43_opts,text='保留現場聲音',variable=self.ambient).pack(side='left',padx=12)
+        ttk.Checkbutton(v43_opts,text='音樂節奏點近似對齊',variable=self.beat_sync).pack(side='left')
         ttk.Label(f2, text='固定輸出：1920×1080、16:9、無字幕。每組素材使用獨立快取資料夾。', foreground='#666').grid(row=4, column=0, columnspan=3, sticky='w', pady=(8, 0))
 
         btn = ttk.Frame(pad)
@@ -151,18 +159,18 @@ class Application:
 
     def save(self):
         try:
-            CONFIG.write_text(json.dumps({'inputs':self.inputs,'output':self.out.get(),'music':self.music.get(),'model':self.model.get(),'seconds':self.seconds.get(),'temporal':self.temporal.get(),'analysis_mode':self.analysis_mode.get(),'hardware_profile':self.hardware_profile.get()}, ensure_ascii=False,indent=2), encoding='utf-8')
+            CONFIG.write_text(json.dumps({'inputs':self.inputs,'output':self.out.get(),'music':self.music.get(),'model':self.model.get(),'seconds':self.seconds.get(),'temporal':self.temporal.get(),'analysis_mode':self.analysis_mode.get(),'hardware_profile':self.hardware_profile.get(),'dissolve':self.dissolve.get(),'ambient':self.ambient.get(),'beat_sync':self.beat_sync.get()}, ensure_ascii=False,indent=2), encoding='utf-8')
         except OSError:pass
 
     def load(self):
         try:data=json.loads(CONFIG.read_text(encoding='utf-8'))
         except (OSError, ValueError):data={'inputs':[DEFAULT_INPUT]}
         self.add(data.get('inputs',[]))
-        for key,var in [('output',self.out),('music',self.music),('model',self.model),('seconds',self.seconds),('temporal',self.temporal),('analysis_mode',self.analysis_mode),('hardware_profile',self.hardware_profile)]:
+        for key,var in [('output',self.out),('music',self.music),('model',self.model),('seconds',self.seconds),('temporal',self.temporal),('analysis_mode',self.analysis_mode),('hardware_profile',self.hardware_profile),('dissolve',self.dissolve),('ambient',self.ambient),('beat_sync',self.beat_sync)]:
             if data.get(key) is not None:
                 value=data[key]
                 if key=='model' and value=='gemma3:4b':value='gemma3:12b'
-                if key=='temporal':var.set(bool(value))
+                if key in ('temporal','dissolve','ambient','beat_sync'):var.set(bool(value))
                 else:var.set(str(value))
 
     def check_env(self):
@@ -218,14 +226,15 @@ class Application:
         self.status.config(text='執行中…')
         inputs=list(self.inputs); output=str(self.result_dir); model=self.model.get().strip()
         test=self.test.get(); music=self.music.get().strip(); temporal=self.temporal.get(); analysis_mode=self.analysis_mode.get(); hardware_profile=self.hardware_profile.get()
+        dissolve=self.dissolve.get();ambient=self.ambient.get();beat_sync=self.beat_sync.get()
         self.append_log('=== 開始工作：'+output+' ===')
         self.append_log('素材來源：'+str(len(inputs))+' 項')
-        threading.Thread(target=self.worker,args=(inputs,output,model,length,test,music,temporal,analysis_mode,hardware_profile),daemon=True).start()
+        threading.Thread(target=self.worker,args=(inputs,output,model,length,test,music,temporal,analysis_mode,hardware_profile,dissolve,ambient,beat_sync),daemon=True).start()
 
-    def worker(self,inputs,output,model,length,test,music,temporal,analysis_mode,hardware_profile):
+    def worker(self,inputs,output,model,length,test,music,temporal,analysis_mode,hardware_profile,dissolve,ambient,beat_sync):
         stages=[['scan']+sum((['--input',p] for p in inputs), [])+(['--scan-limit','20'] if test else []),
                 ['analyze','--model',model,'--analysis-mode',analysis_mode,'--hardware-profile',hardware_profile,'--fast-model','gemma3:4b','--ai-timeout','120']+([] if temporal else ['--single-frame'])+(['--analyze-limit','50'] if test else []),
-                ['render','--seconds',str(min(length,30) if test else length),'--min-score','40']+(['--music',music] if music else [])]
+                ['render','--seconds',str(min(length,30) if test else length),'--min-score','40']+(['--music',music] if music else [])+([] if dissolve else ['--no-dissolve'])+([] if ambient else ['--no-ambient'])+([] if beat_sync else ['--no-beat-sync'])]
         try:
             for args in stages:
                 if self.cancel_requested:break
@@ -255,7 +264,7 @@ class Application:
                     self.status.config(text=value if kind=='done' else '執行失敗')
                     self.append_log(value)
                     if kind=='done' and not self.cancel_requested:
-                        messagebox.showinfo('完成','影片位置：\n'+str(self.result_dir/'Travel_Vlog_Final_V2.mp4'))
+                        messagebox.showinfo('完成','影片位置：\n'+str(self.result_dir/'Travel_Vlog_Final_V43.mp4'))
                     elif kind=='error':messagebox.showerror('執行失敗',value)
         except queue.Empty:pass
         self.master.after(100,self.drain)

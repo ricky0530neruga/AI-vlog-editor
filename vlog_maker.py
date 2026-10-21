@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""AI Travel Vlog V4.2: local, resumable, source files always read-only. Python >=3.10."""
+"""AI Travel Vlog V4.3: local, resumable, source files always read-only. Python >=3.10."""
 import argparse
 import base64
 import datetime as dt
@@ -28,7 +28,7 @@ VIDEOS={'.mp4','.mov','.m4v','.avi','.mkv','.webm','.mts','.m2ts'}
 PHOTOS={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
 DEFAULT_IN=r'C:\Users\SCE\Desktop\Travel1'
 DEFAULT_OUT=r'C:\Users\SCE\Desktop\Vlogwork'
-VERSION='4.2'
+VERSION='4.3'
 
 def command(cmd, capture=False, binary=False):
     p=subprocess.run([exe(str(x)) if str(x) in ('ffmpeg','ffprobe') else str(x) for x in cmd], stdin=subprocess.DEVNULL,
@@ -335,10 +335,13 @@ def choose(db,target,shot,min_score):
     # Vary shot length by role and activity, then adjust all to requested duration.
     lengths=[]
     for r in ordered:
-        if r is opening:length=5.0
-        elif r is climax:length=7.0
-        elif r is ending:length=7.0
-        else:length=shot*(1.15 if (r['event'] or 0)>75 else 0.88 if r['category']=='landscape' else 1.)
+        if r is opening:length=6.0
+        elif r is climax:length=6.2
+        elif r is ending:length=8.0
+        elif r['category']=='landscape':length=shot*1.18
+        elif r['category'] in ('city','transport'):length=shot*0.80
+        elif (r['event'] or 0)>75 or r['category'] in ('people','activity'):length=shot*1.12
+        else:length=shot
         lengths.append(min(float(length),max(0.5,float(r['duration'])) if r['kind']=='video' else 30))
     # Allocate remaining time within per-clip duration caps; never repeat or slow down a source to pad.
     for _ in range(10):
@@ -357,14 +360,19 @@ def choose(db,target,shot,min_score):
         start=round(max(0.,min(float(r['duration'])-seconds,r['position']-seconds/2)),3) if r['kind']=='video' else 0.
         plan.append({'path':r['path'],'kind':r['kind'],'start':start,'seconds':seconds,
                      'score':r['score'],'event':r['event'],'category':r['category'],
-                     'description':r['description'],'role':('opening' if r is opening else 'highlight' if r is climax else 'ending' if r is ending else 'journey')})
+                     'description':r['description'],'people':r.get('people'),
+                     'source_duration':r['duration'],'candidate_position':r['position'],
+                     'role':('opening' if r is opening else 'highlight' if r is climax else 'ending' if r is ending else 'journey')})
     return plan
 
-def render(db,out,target,shot,minimum,music,crf,force):
+def render(db,out,target,shot,minimum,music,crf,force,cinematic=True,transition=True,preserve_audio=True,beat_sync=True):
     plan=choose(db,target,shot,minimum)
+    if cinematic:
+        from cinematic_editor import render_v43
+        return render_v43(plan,out,target,music,crf,force,transition,preserve_audio,beat_sync)
     if not plan:raise ValueError('No V2 analyzed clips. Run analyze, or lower --min-score.')
     plan_file=out/'edit_plan_v2.json'
-    plan_file.write_text(json.dumps({'version':VERSION,'target':target,'plan':plan},ensure_ascii=False,indent=2),encoding='utf-8')
+    plan_file.write_text(json.dumps({'version':'4.2-classic','target':target,'plan':plan},ensure_ascii=False,indent=2),encoding='utf-8')
     total=sum(x['seconds'] for x in plan)
     print(f'Edit plan: {len(plan)} clips / {total:.1f} s (target {target}); {plan_file}')
     if total<target-2:print('NOTICE: Insufficient distinct material; output intentionally shorter instead of repeating footage.')
@@ -400,7 +408,7 @@ def render(db,out,target,shot,minimum,music,crf,force):
     print('DONE:',final)
 
 def main():
-    p=argparse.ArgumentParser(description='AI Vlog V4.2, Windows 1080p 16:9, no subtitles; original files preserved.')
+    p=argparse.ArgumentParser(description='AI Vlog V4.3, Windows 1080p 16:9, no subtitles; original files preserved.')
     p.add_argument('stage',choices=['scan','analyze','render','all'])
     p.add_argument('--input',action='append',default=[])
     p.add_argument('--out',type=Path,default=Path(DEFAULT_OUT))
@@ -419,6 +427,10 @@ def main():
     p.add_argument('--min-score',type=int,default=45)
     p.add_argument('--music',type=Path)
     p.add_argument('--crf',type=int,default=21)
+    p.add_argument('--classic-render',action='store_true',help='Use the original V4.2 renderer instead of V4.3 cinematic output')
+    p.add_argument('--no-dissolve',action='store_true',help='Use hard cuts instead of grouped 0.4s dissolves')
+    p.add_argument('--no-ambient',action='store_true',help='Do not preserve original ambient audio')
+    p.add_argument('--no-beat-sync',action='store_true',help='Disable approximate music onset alignment')
     p.add_argument('--retry',action='store_true',help='re-analyze previously analyzed frames')
     p.add_argument('--force',action='store_true',help='force re-encode cached clips')
     a=p.parse_args()
@@ -433,7 +445,8 @@ def main():
         if a.stage in ('analyze','all'):analyze(db,out,a.model,a.analyze_limit,a.step,a.max_per_video,a.retry,not a.single_frame,a.analysis_mode,a.fast_model,a.ai_timeout,a.hardware_profile)
         if a.stage in ('render','all'):
             if a.music and not a.music.is_file():p.error('Music file not found')
-            render(db,out,a.seconds,a.shot,a.min_score,a.music,a.crf,a.force)
+            render(db,out,a.seconds,a.shot,a.min_score,a.music,a.crf,a.force,
+                   not a.classic_render,not a.no_dissolve,not a.no_ambient,not a.no_beat_sync)
     finally:db.close()
 if __name__=='__main__':
     try:main()
