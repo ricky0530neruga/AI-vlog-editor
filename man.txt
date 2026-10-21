@@ -1,204 +1,73 @@
-AI Vlog Maker V4.2 — 效能更新說明（繁體中文）
+AI Vlog Maker V4.4.2 操作手冊（繁體中文）
+========================================
 
-重要：本版保留原始素材唯讀，不會刪除、搬移或覆寫來源照片／影片。
+一、V4.4.2 修正摘要
+V4.4.1 的「候選片段」只讀取 AI 分析成功（v2=1）的資料。
+如果某些片段尚未完成評分、模型回傳錯誤、或在 CPU 預篩時被跳過，
+它們雖然已經存在 SQLite，卻不會顯示在 GUI，可能造成整頁空白。
 
-V4.2 新增：
-1. GUI「硬體效能設定」：cpu（教室無獨顯建議）或 standard。
-2. cpu + balanced：快速影格預篩，去除極暗及同來源近似畫面；12B 複審比例約 8%，上限 12 張。
-3. standard + balanced：不啟用預篩，12B 複審比例約 20%，上限 40 張。
-4. quality：12B 完整分析，不因 cpu 設定而減少候選。
-5. 每筆 AI 分析後顯示已耗時間與推估剩餘時間；估算會隨處理速度波動。
-6. 快取資料庫保留原本已分析完成的候選；下次執行可接續。
+V4.4.2 修正：
+- 只要完成素材掃描，就建立候選片段資料（不需等待 Ollama 完成）。
+- ②挑選片段頁會顯示所有候選及狀態：已分析、未分析、預篩跳過、分析失敗。
+- 顯示已索引素材數量、候選總數、AI 完成數、預篩跳過數、分析失敗數。
+- 可用狀態篩選、檔名搜尋；點選鏡頭可看縮圖、AI 說明或失敗原因。
+- 已跳過／未評分的候選也可「手動加入片單」並輸出；分數僅暫定為中性值50，
+  不會寫回資料庫，也不代表它經過 AI 審查。
+- 若改過素材來源、導致工作區識別碼不同，可以點「選擇既有分析工作區」
+  找到過去的 AI_Vlog_... 資料夾（裡面須包含 index.sqlite）。
+- AI 分析全部失敗時，現在會顯示警告，而非宣稱所有素材成功分析。
+- 若分析階段意外失敗，仍可保留已掃描的候選素材供手動挑選。
 
-注意：極暗鏡頭或相似畫面可能包含重要情節。若選片遺漏，請改用 standard 或 quality 並使用新的輸出工作區重新分析。
-更換硬體模式時，已完成的快取不會自動全部重新分析。預篩跳過的片段也會記錄於 SQLite。
-CPU/GPU 自動偵測不一定可靠，本版本採「可明確指定的硬體模式」，請依 ollama ps 確認實際推論位置。
+二、更新方式（只替換四個檔案）
+1. 先在 Antigravity 對目前 V4.4.1 專案 Commit，或備份你自訂的 GUI 文字。
+2. 將本 PATCH 解壓後的 vlog_gui.py、vlog_maker.py、man.txt 覆蓋到專案根目錄。
+3. 新增 CHANGELOG_V4_4_2.txt。
+4. 其他檔案（cinematic_editor.py、app.py、start_gui.bat、安裝與打包腳本）不變。
+5. 原始照片、影片及 Vlogwork/index.sqlite 都不需移動或刪除。
+6. 使用 Python 模式可直接雙擊原本 start_gui.bat；若使用 EXE，需重新打包。
 
-AI Travel Vlog Maker V4 使用與移機手冊（繁體中文）
-=================================================
+三、操作流程
+① 掃描與 AI 分析
+- 加入一個或多個素材資料夾／檔案，選好輸出根目錄。
+- 按「① 開始掃描並分析」。完成後自動切換到②。
+- 即使 Ollama 分析失敗，候選鏡頭也應出現在②（狀態會標示原因）。
 
-【重要：這份 ZIP 尚未包含已編譯好的 Windows EXE】
-需要先在 Windows 電腦上執行 build_windows.bat，才能產生 EXE。
-本 ZIP 不包含 FFmpeg 執行檔、Ollama 與 AI 模型；請依下列說明準備。
+② 挑選片段 → 剪輯輸出
+- 左側預設「全部」，會列出所有候選；可依狀態篩選或搜尋檔名。
+- 點選候選顯示靜態縮圖和 AI 評分／錯誤原因。
+- 將想保留的片段加入右側片單，使用上移／下移調整順序。
+- 未評分的片段可手動選入，但不會憑空獲得 AI 描述或 AI 評分。
+- 確認片單、片長、音樂後按「② 按選定片單開始剪輯輸出 MP4」。
+- 程式只使用你選定的片段，不會偷偷更換為其他 AI 推薦片段。
+- 輸出位置：工作區中的 Travel_Vlog_Final_V43.mp4（沿用 V4.3 渲染引擎命名）。
 
-一、首次在 Windows 建立可攜式 EXE（手動操作）
-1. 解壓縮本 ZIP 至 C:\Users\SCE\Desktop\vlog_ai_windows（亦可放其他目錄）。
-2. 安裝 Python 3.10 或更新版本，確認 PowerShell 可執行 py --version。
-3. 從 FFmpeg 官方網站 https://ffmpeg.org/download.html 的 Windows 建置連結取得可信賴版本。
-   解壓後把 ffmpeg.exe、ffprobe.exe 複製到本專案的 tools 資料夾。
-4. 雙擊 build_windows.bat，程式會安裝 PyInstaller，然後在 dist\AI_Vlog_Maker
-   建立 AI_Vlog_Maker.exe 及支援檔案。首次打包需連網下載 PyInstaller。
-5. 啟動 dist\AI_Vlog_Maker\AI_Vlog_Maker.exe，按「環境檢查」。
-6. 若要攜帶到別台電腦，請複製「整個 dist\AI_Vlog_Maker 資料夾」；
-   不可只複製 AI_Vlog_Maker.exe。建議壓縮該資料夾後搬移。
+③ 執行紀錄
+- AI 完成 0 個又看到「分析失敗」時，查看 [FAST ERROR]／[REVIEW ERROR]。
+- 100% CPU 上執行 Gemma 12B 可能很慢；建議使用平衡+CPU 省時。
 
-二、其他電腦仍需手動安裝與設定的東西
-1. 安裝 Ollama： https://ollama.com/download/windows
-2. 啟動 Ollama。若未啟動，可以從開始選單開啟 Ollama。
-3. 打開 PowerShell，執行： ollama pull gemma3:12b
-   若 GUI 換成其他模型名稱，則下載該模型，並確認它支援圖片理解。
-4. 確認本機 Ollama API 使用預設 http://127.0.0.1:11434。
-   本程式預設使用此位址；若修改 Ollama 埠號，需要修改程式。
-5. FFmpeg：若第一次打包時已複製 tools\ffmpeg.exe / ffprobe.exe，
-   發行資料夾內有 tools 子資料夾就不必另裝；否則在新電腦安裝 FFmpeg 並加入 PATH。
-6. 新電腦不需要安裝 Python，但硬體效能和模型相容性仍會影響速度。
-7. 初次執行 Windows SmartScreen 若顯示未知發行者，請先確認檔案來源；
-   本專案 EXE 未經數位簽章，不能以出現警告即判定安全或不安全。
+四、找不到上次分析資料時
+正常工作區位置：輸出根目錄\AI_Vlog_<12碼識別值>\index.sqlite
+系統依據「選取的素材來源清單」產生識別碼：更換資料夾路徑、加入單一檔案，
+或修改輸出根目錄，都可能切換到另一個工作區。
+此時在②按「選擇既有分析工作區」並指向含 index.sqlite 的資料夾即可復用。
+重新開始①掃描時，會依當前選取的素材來源使用其正常工作區，避免混淆資料。
 
-三、一般操作
-1. 雙擊 AI_Vlog_Maker.exe。
-2. 按「加入檔案」選多張照片／多支影片，或按「加入資料夾」選取整批素材。
-3. 按「瀏覽」選輸出根目錄，例如 C:\Users\SCE\Desktop\Vlogwork。
-4. 可選授權使用的背景音樂；沒有音樂時輸出為無聲影片。
-5. 片長預設 180 秒；固定 1920×1080、16:9、無字幕。
-6. 第一次先勾選「測試模式」確認工作正常。
-7. 按「開始」，程式執行掃描 → Ollama 分析 → FFmpeg 剪輯。
-8. 完成後按「打開輸出資料夾」，尋找 Travel_Vlog_Final_V2.mp4。
-9. 每個素材組合會在輸出根目錄建立專屬 AI_Vlog_xxxxxx 工作區和快取。
+五、必要的軟體與環境
+- Windows 10/11、Python 3.10+（直接執行 .py 時）；通常內建 Tkinter。
+- FFmpeg 與 FFprobe；可安裝於 PATH 或放在專案 tools 資料夾。
+- Ollama 服務與視覺模型：gemma3:4b（平衡初選）、gemma3:12b（複審）。
+- 原始素材永遠只讀取；index.sqlite、縮圖和輸出影片寫入工作區。
+- 影片播放預覽仍由縮圖與清單提供，尚未加入內嵌播放器。
 
-四、安全、儲存空間與注意事項
-- 原始旅遊照片與影片只讀取，不會搬移或覆蓋；輸出資料夾需有足夠空間。
-- 使用獨立工作區的快取，重跑相同素材組合可降低重複計算。
-- 本程式仍採 V2 的影格取樣與自動選片，不保證故事品質等同人工剪輯。
-- V4 主要改善可攜性及 GUI 環境檢查，並未新增字幕、電影轉場或節拍同步。
-- 要打包成 Windows EXE，請在 Windows 上執行 build_windows.bat；此 ZIP 製作時未在 Windows 實測。
-- Ollama 依模型與 Windows 版本可能需要不同硬體配置；若分析太慢，請改用較小的視覺模型。
-- 程式的 GUI 設定會存在使用者的 LOCALAPPDATA\AI_Vlog_Maker_V4 內，而非程式目錄。
+六、Git 增量更新
+在乾淨的 Git 工作區建立：git switch -c fix/v4.4.2-candidates
+更新檔案後檢查：git diff
+提交：git add vlog_gui.py vlog_maker.py man.txt CHANGELOG_V4_4_2.txt
+       git commit -m "fix: show indexed clips and analysis statuses"
+       git push -u origin fix/v4.4.2-candidates
 
-五、故障排除
-- py 無法辨識：重新安裝 Python 並啟用 Windows Python Launcher。
-- 找不到 ffmpeg：確認發行資料夾 tools 中有 ffmpeg.exe 與 ffprobe.exe。
-- 連不上 Ollama：啟動 Ollama，並執行 ollama list 確認模型存在。
-- EXE 在其他電腦不能執行：確認整個 dist\AI_Vlog_Maker 資料夾都有複製，
-  Windows 系統相容，且防毒沒有隔離必要程式。
-- 執行中失敗：查看 GUI 執行紀錄與輸出資料夾剩餘容量。
-
-
-六、V4 自動安裝與打包（新增）
-1. 先閱讀 auto_setup.ps1；它會從外部來源安裝軟體並下載檔案。
-2. 雙擊「一鍵安裝並打包.bat」，可自動執行：
-   - 偵測 Python 3.10+；未安裝時透過 winget 安裝 Python 3.12。
-   - 若 tools 缺少 FFmpeg，從 gyan.dev 下載 Windows essentials 並複製 ffmpeg.exe / ffprobe.exe。
-   - 偵測 Ollama；未安裝時透過 winget 安裝，並下載 gemma3:12b 模型。
-   - 使用 pip 安裝 PyInstaller，編譯 Windows EXE 並複製 FFmpeg 進發行資料夾。
-3. 預設使用網路、磁碟空間與數 GB 的模型下載；部分安裝可能出現 Windows 權限／授權提示。
-4. 完成位置：dist\AI_Vlog_Maker\AI_Vlog_Maker.exe。
-5. 使用者仍需確認：winget 可用、Windows 防火牆是否允許 Ollama、模型服務有啟動、素材及輸出路徑。
-6. 移機時，EXE 資料夾可直接複製，但其他電腦仍需 Ollama 與模型；可在新電腦執行本腳本安裝環境（會同時重新打包）。
-7. 若安裝 Ollama 後 PATH 未更新，腳本會嘗試其預設安裝路徑；如果仍找不到，重新登入 Windows 後重跑。
-8. 若公司電腦禁止 winget、下載被阻擋，或無安裝權限，請依前述手動操作。
-9. 若已具備 Ollama，且暫時不想重抓模型，可在 PowerShell 使用：
-   powershell -NoProfile -ExecutionPolicy Bypass -File .\auto_setup.ps1 -SkipModel
-10. 本腳本尚未在你的 Windows 電腦實際執行驗證；請先在可測試的電腦上試跑。
-
-
-【V4 主要更新】
-1. 預設 Ollama 模型改為 gemma3:12b（初次使用需手動下載，或執行一鍵安裝）。
-2. 預設每個影片候選時間點抽取三張影格（前 1.5 秒、當前、後 1.5 秒），提供模型判斷動作與變化；仍非原生影片理解。
-3. SQLite 會記錄評分使用的模型及分析模式。更換模型或切換單張／三張分析會重新評分，而不是沿用舊的 Gemma 4B 分數。
-4. GUI 可勾選是否使用連續三影格分析。12B 評分速度可能明顯慢於 4B，先開啟測試模式。
-5. 依然保留 V2 的故事排序與畫面去重演算法，影像相似度會有誤判，請驗證成片。
-
-【搬到其他電腦仍要手動做】
-- 第一次在有 Python 的 Windows 電腦執行「一鍵安裝並打包.bat」來建立 dist/AI_Vlog_Maker。
-- 只需複製完整 dist/AI_Vlog_Maker 資料夾，不需複製 Python 原始碼。
-- 目標電腦仍須安裝及啟動 Ollama；執行 ollama pull gemma3:12b 下載模型。
-- 使用前於 GUI 點選「環境檢查」，確認 FFmpeg、Ollama 與模型皆可用。
-- 若已有舊版 GUI 的儲存設定，舊模型名稱可能仍顯示 gemma3:4b；請在模型欄位手動改成 gemma3:12b。
-- 體積較大的影像模型可能無法完全在所有電腦的 GPU 中執行，速度會因 RAM、顯示卡與 Ollama 後端差異很大。
-
-
-=== V4.1 新增操作說明 ===
-1. GUI 的「AI 分析策略」預設 balanced，使用 gemma3:4b 單影格初選，前約 20%（最多 40 個）再交由 gemma3:12b 複審。
-2. quality 模式使用 gemma3:12b 對全部候選片段分析，速度慢，適合短片測試。
-3. 每個影格送出前就會顯示 [FAST x/y] 或 [REVIEW x/y]，等待模型回應期間不代表當機。
-4. 單次 Ollama 請求逾時預設 120 秒，會記錄錯誤、跳過該片段；成功結果存進 SQLite，重新執行可接續。
-5. 建議先執行：ollama pull gemma3:4b 以及 ollama pull gemma3:12b。
-6. 如需命令列：py vlog_maker.py analyze --out "C:\Users\SCE\Desktop\Vlogwork" --analysis-mode balanced --fast-model gemma3:4b --model gemma3:12b --ai-timeout 120
-7. 分析時間與 CPU 使用率並不完全等價；如 ollama ps 顯示 100% CPU，表示尚未啟用 GPU 推論。
-8. V4.1 不保證能辨識所有重要事件；仍依賴取樣圖片，沒有音訊語意分析。
-9. 先備份舊版專案，不要覆寫既有影片；每組素材的索引與分析快取可延續使用。
-
-
-=== V4.3：電影感剪輯增量更新（2026-10）===
-本次只需覆蓋 vlog_maker.py、vlog_gui.py、man.txt，並新增 cinematic_editor.py。
-不必刪除原本的資料庫、分析快取、資料夾，也不必重新下載 Ollama 模型。
-
-新功能：
-1. 依開場、旅行過程、人物活動、高潮與結尾調整片段預設長度。
-2. 每最多六段鏡頭組成一個合成區塊；區塊內使用約 0.4 秒交叉淡化，區塊之間保留直接剪接，以控制 CPU/RAM 負擔。
-3. 可以保留影片現場聲音（照片及無音軌影片補靜音）；依高潮/人物片段調整現場聲音強度。
-4. 可以疊加授權背景音樂，使用 FFmpeg 混音、淡入淡出、峰值限制；不是錄音室級自動混音。
-5. 若提供音樂，可透過音量能量變化偵測近似節奏點，將部分剪接時間微調至附近的節奏點（預設最多 0.18 秒）。不是專業 BPM/節拍追蹤。
-6. 新輸出為 Travel_Vlog_Final_V43.mp4、edit_plan_v43.json；舊 V2、V4.2 輸出不受影響。
-
-操作方式：
-- 解壓縮更新包並將檔案放到既有 Git 專案根目錄，先備份原檔。
-- Python 模式雙擊原有 start_gui.bat，或在 PowerShell 執行：py .\vlog_maker.py render --out "C:\Users\SCE\Desktop\Vlogwork" --seconds 180 --music "D:\Music\licensed.mp3"
-- GUI 多了三個勾選項目：交叉淡化、保留現場聲音、音樂節奏點近似對齊。
-- 使用原本已編譯的 EXE **不會**自動更新：需要重新執行既有的 build_windows.bat 或一鍵安裝並打包.bat。
-- CLI 如要沿用舊 V4.2 輸出，可附加 --classic-render；關閉新功能可使用 --no-dissolve、--no-ambient、--no-beat-sync。
-
-注意：
-- V4.3 的每個片段會另外進行影片/音訊編碼，尤其 CPU-only 與 1080p 合成可能花更多時間。
-- 音樂需使用自己有權使用的檔案；不包含商業音樂下載。
-- 原始素材只讀取，所有新轉檔、合成檔及報告寫在指定工作資料夾。
-- 已有的 V4.2 分析快取可以保留；更新不要求重新跑 Ollama，除非素材/模型設定有變。
-- FFmpeg 的實際輸出時長可能因影格與 AAC 編碼有小幅誤差；素材不足時不會無限延長填滿 180 秒。
-- 建議先用 30 秒小測試確認音畫與轉場正常，再大量素材正式渲染。
-
-
-=== V4.4：Windows GUI 完整化（2026-10-21）===
-【此版只需覆蓋 vlog_gui.py、vlog_maker.py、man.txt，新增 CHANGELOG_V4_4.txt。】
-不必重設 Ollama、重抓模型、重掃已有的素材或刪除舊版 SQLite 資料庫。
-原有 cinematic_editor.py、app.py、start_gui.bat、自動安裝與 build_windows.bat 均保持不變。
-
-一、介面四個頁籤
- ① 專案設定：加入多個檔案/資料夾、輸出位置、背景音樂、Gemma 模型、片長、最低分、
-              balanced/quality、cpu/standard、測試模式、淡化/現場聲/近似節奏同步。
- ② AI 素材審核：候選片段分頁查看，顯示評分、事件分數、來源、描述、影格縮圖；
-              可搜尋、查看分析失敗，選取後排除單一候選片段或整個來源檔案。
- ③ 剪輯順序預覽：從既有評分和排除設定產生估算時間軸；
-              可檢視開場/旅程/高潮/結尾、片段秒數、來源、描述，排除選取鏡頭。
- ④ 執行紀錄：顯示每階段命令列輸出、當前進度和（若有）AI 估計剩餘時間。
-
-二、最實用的新流程
- 1. 在「專案設定」按「一鍵掃描 + AI 分析 + 輸出」，完成首次剪輯。
- 2. 切換至「AI 素材審核」，查看 AI 的分數與縮圖。
- 3. 如果某個候選鏡頭很無聊，選取該列 → 「排除選取鏡頭／取消排除」。
-    若同一個來源檔案完全不想用，點「排除整個來源檔案／取消」。
-    排除設定存於工作區 ui_review_v44.json，不刪除素材，也不修改 AI 評分。
- 4. 切到「剪輯順序預覽」，按「產生／更新剪輯預覽」，產生 edit_plan_preview_v44.json。
- 5. 檢查鏡頭順序後按「只重新剪輯輸出」，直接使用舊 AI 快取，跳過 scan/analyze。
-    完成檔案仍為 Travel_Vlog_Final_V43.mp4（沿用 V4.3 的電影感剪輯引擎）。
- 6. 重要：修改排除或最低分後，舊預覽不會自動更新；請重新按預覽。
-
-三、縮圖與播放限制
- - 縮圖是在使用者點選候選片段時才按需擷取 PNG；會快取在 ui_thumbnails_v44 資料夾。
- - 「以系統播放器開啟原始檔」會呼叫 Windows 預設影片或照片軟體，並非 GUI 內嵌播放器。
- - 大量候選素材使用每頁 120 筆的 SQL 分頁，不會整批讀入 Tkinter。
- - 預覽是「選片計畫」，不是事先渲染完成的影片，交叉淡化/節奏微調會影響實際片長。
-
-四、可選的命令列用法
- 預覽（不重新分析）：
- py vlog_maker.py plan --out "C:\Users\SCE\Desktop\Vlogwork\AI_Vlog_工作區ID" --seconds 180 --min-score 40
- 套用排除：
- py vlog_maker.py plan --out "C:\Users\SCE\Desktop\Vlogwork\AI_Vlog_工作區ID" --seconds 180 --review-file "C:\Users\SCE\Desktop\Vlogwork\AI_Vlog_工作區ID\ui_review_v44.json"
- 真正輸出：把 plan 換成 render；加 --music 可以提供有授權的音樂檔。
-
-五、手動必須完成的步驟
- - Git 專案先切到 feature/v4.4-gui 分支，再覆蓋更新檔案。若自己已修改舊 GUI 文字，
-   先看 Antigravity / Git Diff，把自訂用語合併進新版，切勿不備份直接覆蓋。
- - Python 原始碼模式雙擊原有 start_gui.bat 即可；無需重新安裝 Python 套件。
- - 若使用以前已打包的 EXE：必須重新執行原有 build_windows.bat 或一鍵安裝並打包.bat。
- - 搬到別台電腦，仍需要能使用的 FFmpeg、Ollama 與已下載的視覺模型。
- - 首次使用者自行選取輸入/輸出資料夾（預設舊教室路徑在其他電腦上可能不存在）。
-
-六、注意與保護
- - 本版只讀取來源影片/照片；不會改動、搬移、刪除原始素材。
- - ui_review_v44.json / edit_plan_preview_v44.json 等檔案只寫到輸出工作區。
- - SQLite 的 AI 評分和 V4.2/V4.3 已完成的分析快取保留。
- - 手動排除只會減少選用素材，不能保證三分鐘一定夠用。
- - 分析進度是階段性估算，不是精準的全程進度；Ollama CPU 推論速度仍視硬體而定。
- - 開發期間已在 Linux + Xvfb 測試 GUI 啟動、SQLite 分頁、排除與 FFmpeg 渲染。
-   尚未在使用者 Windows 電腦做 EXE/GUI 的正式實機驗證。
+七、驗證情況
+已通過 Python 3.10 語法相容性檢查、SQLite 四種候選狀態檢查、
+Linux 虛擬顯示器中的 Tkinter 操作測試、手動加入未評分片段，
+以及由該片單實際輸出 1920×1080 MP4 的 FFmpeg 測試。
+尚未在 Windows 實機與打包 EXE 測試；請先在 Python 模式驗證介面。

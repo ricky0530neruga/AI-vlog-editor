@@ -28,7 +28,7 @@ VIDEOS={'.mp4','.mov','.m4v','.avi','.mkv','.webm','.mts','.m2ts'}
 PHOTOS={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
 DEFAULT_IN=r'C:\Users\SCE\Desktop\Travel1'
 DEFAULT_OUT=r'C:\Users\SCE\Desktop\Vlogwork'
-VERSION='4.4'
+VERSION='4.4.2'
 
 def command(cmd, capture=False, binary=False):
     p=subprocess.run([exe(str(x)) if str(x) in ('ffmpeg','ffprobe') else str(x) for x in cmd], stdin=subprocess.DEVNULL,
@@ -369,8 +369,76 @@ def choose(db,target,shot,min_score,excluded_ids=None,excluded_paths=None):
                      'role':('opening' if r is opening else 'highlight' if r is climax else 'ending' if r is ending else 'journey')})
     return plan
 
-def render(db,out,target,shot,minimum,music,crf,force,cinematic=True,transition=True,preserve_audio=True,beat_sync=True,excluded_ids=None,excluded_paths=None):
-    plan=choose(db,target,shot,minimum,excluded_ids,excluded_paths)
+def choose_selected(db, candidate_ids, target, shot=5.0):
+    """Create a real edit plan from explicitly approved IDs, preserving GUI order.
+
+    IDs must belong to indexed database candidates; unscored clips can be manually approved. Paths and timing
+    are read from the database, never from user-editable JSON.
+    """
+    if not isinstance(candidate_ids, list) or not 1 <= len(candidate_ids) <= 5000:
+        raise ValueError('請先在 GUI 選取至少一個、最多 5000 個鏡頭。')
+    if any(not isinstance(x, str) or not x for x in candidate_ids):
+        raise ValueError('候選鏡頭 ID 格式錯誤。')
+    if len(candidate_ids) != len(set(candidate_ids)):
+        raise ValueError('同一個候選鏡頭不可重複選取。')
+    previous_factory=db.row_factory
+    db.row_factory=sqlite3.Row
+    try:
+        rows=[]
+        for key in candidate_ids:
+            row=db.execute("""SELECT c.id,c.path,c.position,c.score,c.description,c.category,
+              c.role,c.event,c.people,m.kind,m.duration FROM candidates c
+              JOIN media m ON c.path=m.path WHERE c.id=? AND m.error IS NULL""",(key,)).fetchone()
+            if row is None:
+                raise ValueError(f'候選鏡頭不存在或已失效：{key}')
+            r=dict(row)
+            if r['score'] is None:r['score']=50.0   # neutral manual score; don't rewrite AI results
+            if r['event'] is None:r['event']=0.0
+            if not r['category']:r['category']='other'
+            if not r['description']:r['description']='手動選取的片段（尚無 AI 描述）'
+            if not Path(r['path']).is_file():
+                raise ValueError('來源檔案找不到：'+r['path'])
+            if r['kind']=='video' and float(r['duration'] or 0)<0.5:
+                raise ValueError('來源影片太短：'+r['path'])
+            rows.append(r)
+    finally:
+        db.row_factory=previous_factory
+    # Keep user order exactly. Never add unrelated clips back via AI auto selection.
+    lengths=[]
+    for row in rows:
+        cap=min(11.,float(row['duration'])) if row['kind']=='video' else 11.
+        lengths.append(min(cap,max(.5,float(shot))))
+    for _ in range(15):
+        remaining=float(target)-sum(lengths)
+        if abs(remaining)<0.03:break
+        if remaining>0:
+            ids=[i for i,r in enumerate(rows) if lengths[i] <
+                 (min(11.,float(r['duration'])) if r['kind']=='video' else 11.)-.03]
+        else:ids=[i for i,v in enumerate(lengths) if v>min(1.5,(min(11.,float(rows[i]['duration'])) if rows[i]['kind']=='video' else 11.))+.03]
+        if not ids:break
+        delta=remaining/len(ids)
+        for i in ids:
+            cap=min(11.,float(rows[i]['duration'])) if rows[i]['kind']=='video' else 11.
+            lengths[i]=max(min(1.5,cap),min(cap,lengths[i]+delta))
+    highlight=max(range(len(rows)),key=lambda i:float(rows[i]['event'] or 0)) if len(rows)>2 else -1
+    plan=[]
+    for i,(r,length) in enumerate(zip(rows,lengths)):
+        length=round(length,3)
+        if length < .45:continue
+        start=(max(0.,min(float(r['duration'])-length,float(r['position'])-length/2))
+               if r['kind']=='video' else 0.)
+        role=('opening' if i==0 else 'ending' if i==len(rows)-1 else
+              'highlight' if i==highlight else 'journey')
+        plan.append({'candidate_id':r['id'],'path':r['path'],'kind':r['kind'],
+                     'start':round(start,3),'seconds':length,
+                     'score':r['score'],'event':r['event'],'category':r['category'],
+                     'description':r['description'],'people':r.get('people'),
+                     'source_duration':r['duration'],'candidate_position':r['position'],
+                     'role':role})
+    return plan
+
+def render(db,out,target,shot,minimum,music,crf,force,cinematic=True,transition=True,preserve_audio=True,beat_sync=True,excluded_ids=None,excluded_paths=None,selected_plan=None):
+    plan=selected_plan if selected_plan is not None else choose(db,target,shot,minimum,excluded_ids,excluded_paths)
     if cinematic:
         from cinematic_editor import render_v43
         return render_v43(plan,out,target,music,crf,force,transition,preserve_audio,beat_sync)
@@ -438,6 +506,7 @@ def main():
     p.add_argument('--retry',action='store_true',help='re-analyze previously analyzed frames')
     p.add_argument('--force',action='store_true',help='force re-encode cached clips')
     p.add_argument('--review-file',type=Path,help='optional V4.4 user review JSON containing excluded_ids and excluded_paths')
+    p.add_argument('--selection-file',type=Path,help='V4.4.1 GUI selection: candidate_ids in required playback order')
     a=p.parse_args()
     if not all(shutil.which(name) or (FFMPEG_DIR/(name+'.exe')).is_file() for name in ('ffmpeg','ffprobe')):p.error('請在 tools 資料夾放入 ffmpeg.exe / ffprobe.exe，或將 FFmpeg 加入 PATH')
     if a.seconds<1 or a.shot<1 or a.step<=0 or a.max_per_video<1:p.error('Invalid duration/step')
@@ -447,6 +516,10 @@ def main():
         if a.stage in ('scan','all'):
             scan(db,[Path(x) for x in (a.input or [DEFAULT_IN])],out,a.scan_limit)
             print('Indexed:',db.execute('SELECT count(*) FROM media WHERE error IS NULL').fetchone()[0])
+            # Create visible candidate rows during scan too, so an Ollama failure
+            # cannot leave the GUI with a blank review page.
+            candidates(db,a.step,a.max_per_video)
+            print('Candidates indexed:',db.execute('SELECT count(*) FROM candidates').fetchone()[0],flush=True)
         if a.stage in ('analyze','all'):analyze(db,out,a.model,a.analyze_limit,a.step,a.max_per_video,a.retry,not a.single_frame,a.analysis_mode,a.fast_model,a.ai_timeout,a.hardware_profile)
         excluded_ids=set(); excluded_paths=set()
         if a.review_file and a.stage in ('plan','render','all'):
@@ -459,8 +532,15 @@ def main():
             excluded_ids=set(str(x) for x in review.get('excluded_ids',[]))
             excluded_paths=set(str(x) for x in review.get('excluded_paths',[]))
             print(f'[V4.4 REVIEW] 排除 {len(excluded_ids)} 個候選、{len(excluded_paths)} 個來源',flush=True)
+        selection_plan=None
+        if a.selection_file and a.stage in ('plan','render','all'):
+            payload=json.loads(a.selection_file.read_text(encoding='utf-8'))
+            if not isinstance(payload,dict):raise ValueError('片單必須是 JSON 物件')
+            selection_plan=choose_selected(db,payload.get('candidate_ids'),a.seconds,a.shot)
+            print(f'[MANUAL SELECTION] 採用 {len(selection_plan)} 個選定鏡頭',flush=True)
         if a.stage=='plan':
-            plan=choose(db,a.seconds,a.shot,a.min_score,excluded_ids,excluded_paths)
+            plan=(selection_plan if selection_plan is not None else
+                  choose(db,a.seconds,a.shot,a.min_score,excluded_ids,excluded_paths))
             report={'version':'4.4-preview','target_seconds':a.seconds,'plan':plan,
                     'note':'Approximate pre-render plan. V4.3 fades and music can adjust final clip durations.'}
             dest=out/'edit_plan_preview_v44.json'
@@ -470,7 +550,7 @@ def main():
             if a.music and not a.music.is_file():p.error('Music file not found')
             render(db,out,a.seconds,a.shot,a.min_score,a.music,a.crf,a.force,
                    not a.classic_render,not a.no_dissolve,not a.no_ambient,not a.no_beat_sync,
-                   excluded_ids,excluded_paths)
+                   excluded_ids,excluded_paths,selection_plan)
     finally:db.close()
 if __name__=='__main__':
     try:main()
