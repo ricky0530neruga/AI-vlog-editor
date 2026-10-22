@@ -71,16 +71,17 @@ def display_time(seconds):
 
 
 class VideoTrimDialog:
-    def __init__(self, parent, source, duration, start, end, on_save):
+    def __init__(self, parent, source, duration, start, end, on_save, on_close=None):
         self.parent=parent;self.source=Path(source);self.duration=float(duration)
-        self.on_save=on_save
+        self.on_save=on_save;self.on_close=on_close
+        self._closed=False;self._initial_seek_attempts=0
         self.window=tk.Toplevel(parent)
         self.window.title('v1.4 · 播放與裁切 — '+self.source.name)
         self.window.geometry('880x710');self.window.minsize(650,550)
         self.window.transient(parent)
         self.window.protocol('WM_DELETE_WINDOW',self.close)
         self._after_id=None;self.player=None;self.instance=None;self.vlc=None
-        self._is_scrubbing=False;self._updating_seek=False;self._range_play=False
+        self._is_scrubbing=False;self._updating_seek=False;self._range_play=False;self._range_seek_pending=False
         self.start_str=tk.StringVar(value=display_time(start))
         self.end_str=tk.StringVar(value=display_time(end))
         self.clock=tk.StringVar(value=display_time(start)+' / '+display_time(self.duration))
@@ -134,10 +135,10 @@ class VideoTrimDialog:
             else:raise RuntimeError('目前僅驗證 Windows / Linux 的播放器嵌入')
             media=self.instance.media_new(str(self.source))
             self.player.set_media(media)
-            self.player.audio_set_volume(int(self.volume.get()))
+            self.player.audio_set_volume(0)  # avoid audio burst before initial pause
             if self.player.play()==-1:raise RuntimeError('VLC 無法開始播放來源檔案')
             self.message.set('已載入影片。可播放、暫停、拖曳或輸入精確 In／Out。')
-            self.window.after(300,self._seek_initial)
+            self.window.after(120,self._seek_initial)
         except Exception as exc:
             self.message.set('無法啟動內建播放器：'+str(exc)[:140]+
                              '。請安裝 64 位元 VLC 和 python-vlc；仍可手動輸入裁切時間。')
@@ -145,9 +146,23 @@ class VideoTrimDialog:
         self._tick()
 
     def _seek_initial(self):
-        if self.player:
-            try:self.player.set_time(int(self.position.get()*1000));self.player.set_pause(1)
+        if self._closed or not self.player:return
+        try:
+            if self.player.is_seekable():
+                self.player.set_time(int(self.position.get()*1000))
+                self.player.set_pause(1)
+                self.player.audio_set_volume(int(self.volume.get()))
+                return
+        except Exception:pass
+        self._initial_seek_attempts+=1
+        if self._initial_seek_attempts<45:
+            self.window.after(100,self._seek_initial)
+        else:
+            try:
+                self.player.set_pause(1)
+                self.player.audio_set_volume(int(self.volume.get()))
             except Exception:pass
+            self.message.set('播放器尚未完成定位，請稍後使用進度條。')
 
     def _tick(self):
         if not self.window.winfo_exists():return
@@ -161,12 +176,12 @@ class VideoTrimDialog:
                         try:self.position.set(current)
                         finally:self._updating_seek=False
                     self.clock.set(display_time(current)+' / '+display_time(self.duration))
-                    if self._range_play and current>=parse_time(self.end_str.get())-0.08:
+                    if self._range_play and not self._range_seek_pending and current>=parse_time(self.end_str.get()):
                         self.player.set_pause(1);self._range_play=False
                         self.play_button.configure(text='▶ 播放')
                 if not self.player.is_playing():self.play_button.configure(text='▶ 播放')
             except Exception:pass
-        self._after_id=self.window.after(200,self._tick)
+        self._after_id=self.window.after(80,self._tick)
 
     def _set_volume(self,_value=None):
         if self.player:
@@ -177,25 +192,48 @@ class VideoTrimDialog:
         if not self.player:return
         if self.player.is_playing():self.player.set_pause(1);self.play_button.configure(text='▶ 播放')
         else:
-            if self.player.get_state()==self.vlc.State.Ended:
-                self.player.stop();self.player.play()
+            state=self.player.get_state()
+            if state in (self.vlc.State.Ended,self.vlc.State.Stopped,
+                         self.vlc.State.NothingSpecial,self.vlc.State.Error):
+                if self.player.play()==-1:
+                    self.message.set('影片重新播放失敗');return
             else:self.player.set_pause(0)
             self._range_play=False
             self.play_button.configure(text='⏸ 暫停')
 
     def stop(self):
         if self.player:
-            self.player.stop();self._range_play=False
+            self.player.stop();self._range_play=False;self._range_seek_pending=False
         self.play_button.configure(text='▶ 播放')
 
     def play_range(self):
         try:start,end=validate_times(parse_time(self.start_str.get()),parse_time(self.end_str.get()),self.duration)
         except ValueError as exc:return messagebox.showerror('裁切時間無效',str(exc),parent=self.window)
         if self.player:
-            self.player.play()
-            self.window.after(140,lambda:self.player and self.player.set_time(int(start*1000)))
-            self._range_play=True;self.play_button.configure(text='⏸ 暫停')
+            if self.player.play()==-1:
+                return messagebox.showerror('無法播放','播放器無法播放選定區間。',parent=self.window)
+            self._range_play=True;self._range_seek_pending=True
+            self.player.audio_set_volume(0)
+            self._range_seek(start,0)
+            self.play_button.configure(text='⏸ 暫停')
         else:messagebox.showinfo('未安裝 VLC','需要安裝 VLC 才能播放；你仍可儲存裁切時間。',parent=self.window)
+
+    def _range_seek(self,start,attempt):
+        if self._closed or not self.player or not self._range_play:return
+        try:
+            if self.player.is_seekable():
+                self.player.set_time(int(start*1000))
+                self.player.audio_set_volume(int(self.volume.get()))
+                self._range_seek_pending=False
+                return
+        except Exception:pass
+        if attempt<40:self.window.after(100,lambda:self._range_seek(start,attempt+1))
+        else:
+            self._range_play=False;self._range_seek_pending=False
+            self.player.set_pause(1)
+            self.player.audio_set_volume(int(self.volume.get()))
+            self.play_button.configure(text='▶ 播放')
+            self.message.set('尚無法精確定位，請稍後重試區間播放。')
 
     def _on_seek_drag(self,_value):
         if self._updating_seek:return
@@ -208,17 +246,28 @@ class VideoTrimDialog:
             try:self.player.set_time(int(self.position.get()*1000))
             except Exception:pass
 
-    def mark_in(self):self.start_str.set(display_time(self.position.get()))
-    def mark_out(self):self.end_str.set(display_time(self.position.get()))
+    def _current_time(self):
+        if self._is_scrubbing:return self.position.get()
+        if self.player:
+            try:
+                milliseconds=self.player.get_time()
+                if milliseconds>=0:return min(self.duration,milliseconds/1000)
+            except Exception:pass
+        return self.position.get()
+
+    def mark_in(self):self.start_str.set(display_time(self._current_time()))
+    def mark_out(self):self.end_str.set(display_time(self._current_time()))
 
     def save(self):
         try:
             start,end=validate_times(parse_time(self.start_str.get()),parse_time(self.end_str.get()),self.duration)
-            self.on_save(start,end)
+            if self.on_save(start,end) is False:return
         except (ValueError,OSError) as exc:return messagebox.showerror('無法儲存裁切',str(exc),parent=self.window)
         self.close()
 
     def close(self):
+        if self._closed:return
+        self._closed=True
         if self._after_id is not None:
             try:self.window.after_cancel(self._after_id)
             except tk.TclError:pass
@@ -231,3 +280,4 @@ class VideoTrimDialog:
             except Exception:pass
         self.instance=None
         if self.window.winfo_exists():self.window.destroy()
+        if self.on_close:self.on_close()

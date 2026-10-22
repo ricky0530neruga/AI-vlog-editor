@@ -60,3 +60,14 @@ EXE 不包含 VLC 的 DLL 與 plugins；移到其他電腦仍須另外安裝 VLC
 FFmpeg 輸出選定時間的實際影片，以及舊快取與既有分析流程的相容性。
 尚未在 Windows 實機確認：VLC 嵌入播放器、Windows HEVC/4K 解碼、PyInstaller EXE 發行。
 若有播放相容性問題，請先提供 GUI 錯誤訊息，以及 VLC / python-vlc 版本。
+
+===== V1.4 Stability Hotfix 注意事項 =====
+- 只覆蓋 vlog_gui.py、video_preview.py、vlog_maker.py 及 man.txt；新增加入 tests/test_hotfix_v141.py 和 CHANGELOG_V1_4_HOTFIX.txt。
+- 使用者原始照片與影片只讀，不會被覆寫。
+- 若舊片單內有失效候選，軟體會保留其他鏡頭、移除失效項目；舊版片單備份為 ui_selected_v441.json.before_prune.bak。
+- 來源檔變更後重新掃描，將刪除該檔對應的程式自製縮圖快取；不會刪除來源檔。
+- VLC 仍需要系統安裝 64 位元 VLC 與 python-vlc。更新 Python 原始碼後須重新打包 EXE。
+- 在 Antigravity 中先比對 Diff，避免蓋掉自行修改過的 GUI 文字。
+- 測試：py -m unittest discover -s tests -v
+- 若無圖形顯示環境，test_gui_smoke.py 必須在 Windows 桌面或 Xvfb 中執行。
+- 本 Hotfix 尚未解決所有 Code Review 事項；詳見 CHANGELOG_V1_4_HOTFIX.txt。

@@ -105,7 +105,19 @@ def scan(db,roots,out,limit):
                         kind=excluded.kind,size=excluded.size,mtime=excluded.mtime,duration=excluded.duration,
                         width=excluded.width,height=excluded.height,error=excluded.error,taken=excluded.taken''',
                         (str(path),kind,st.st_size,st.st_mtime,dur,w,h,None,taken))
+                    # Candidate IDs depend on path/position. Old thumbnails at matching
+                    # positions must not survive a replacement of the source file.
+                    old_ids=[row[0] for row in db.execute(
+                        'SELECT id FROM candidates WHERE path=?',(str(path),))]
                     db.execute('DELETE FROM candidates WHERE path=?',(str(path),))
+                    for key in old_ids:
+                        for file in (out/'thumbnails_v2').glob(key+'*.jpg'):
+                            try:file.unlink()
+                            except OSError:pass  # noncritical cache; do not touch input media
+                        gui_thumb=out/'ui_thumbnails_v441'/(key+'.png')
+                        try:gui_thumb.unlink(missing_ok=True)
+                        except OSError:pass
+
                 except Exception as e:
                     print('[SKIP]',path,str(e)[:150])
                 count+=1

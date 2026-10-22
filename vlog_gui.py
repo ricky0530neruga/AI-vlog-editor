@@ -5,6 +5,7 @@ No third-party UI dependencies; input media is always read-only.
 from contextlib import closing
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import queue
@@ -116,6 +117,8 @@ class Application:
         self.override_workspace=None
         self.page=0;self.page_rows={};self.selected_ids=[];self.plan_rows={};self.manual_trims={}
         self.photo=None;self.thumb_request=0
+        self.trim_dialog=None
+        self.last_selection=None
         self.make_ui();self.load_settings();self.update_workspace()
         root.after(100,self.drain)
         root.protocol('WM_DELETE_WINDOW',self.close)
@@ -322,16 +325,23 @@ class Application:
         except OSError:pass
 
     def load_settings(self):
-        try:data=json.loads(CONFIG.read_text(encoding='utf-8'))
-        except (OSError,ValueError):data={'inputs':[DEFAULT_IN] if Path(DEFAULT_IN).exists() else []}
-        for p in data.get('inputs',[]):
-            if p not in self.inputs:self.inputs.append(p);self.input_list.insert('end',p)
+        try:
+            data=json.loads(CONFIG.read_text(encoding='utf-8'))
+            if not isinstance(data,dict):raise ValueError('設定檔不是物件')
+        except (OSError,ValueError,TypeError):
+            data={'inputs':[DEFAULT_IN] if Path(DEFAULT_IN).exists() else []}
+        paths=data.get('inputs',[])
+        if not isinstance(paths,list):paths=[]
+        for p in paths:
+            if isinstance(p,str) and p and p not in self.inputs:
+                self.inputs.append(p);self.input_list.insert('end',p)
         for key,var in [('output',self.output),('music',self.music),('model',self.model),
              ('seconds',self.seconds),('min_score',self.min_score),('temporal',self.temporal),
              ('analysis_mode',self.mode),('hardware_profile',self.hardware),
              ('dissolve',self.dissolve),('ambient',self.ambient),('beat_sync',self.beat)]:
             if key in data:
-                var.set(data[key])
+                try:var.set(data[key])
+                except (ValueError,TypeError,tk.TclError):pass
         # Test mode intentionally resets to off on every launch.
 
     def update_workspace(self):
@@ -418,6 +428,7 @@ class Application:
         if selection_file.is_file():
             try:
                 payload=json.loads(selection_file.read_text(encoding='utf-8'))
+                if not isinstance(payload,dict):raise ValueError('選片 JSON 必須是物件')
                 ids=payload.get('candidate_ids',[])
                 if not isinstance(ids,list) or not all(isinstance(x,str) for x in ids):raise ValueError('格式錯誤')
                 self.selected_ids=list(dict.fromkeys(ids))
@@ -427,7 +438,7 @@ class Application:
                                        if key in self.selected_ids and isinstance(value,dict)}
                 else:self.manual_trims={}
                 self.refresh_plan();return
-            except (OSError,ValueError,TypeError) as exc:
+            except (OSError,ValueError,TypeError,AttributeError) as exc:
                 self.log_line('選片記錄無法讀取：'+str(exc))
         self.recommend(quiet=True)
 
@@ -440,14 +451,16 @@ class Application:
                 legacy=self.workspace_dir/'ui_review_v44.json'
                 if legacy.is_file():
                     old=json.loads(legacy.read_text(encoding='utf-8'))
-                    excluded_ids=set(old.get('excluded_ids',[]));excluded_paths=set(old.get('excluded_paths',[]))
+                    if isinstance(old,dict):
+                        excluded_ids=set(old.get('excluded_ids',[]));excluded_paths=set(old.get('excluded_paths',[]))
+                    else:self.log_line('[WARN] 舊版排除清單格式錯誤，已忽略')
                 length=self.get_length()
                 picked=core.choose(db,length,5.,int(self.min_score.get()),excluded_ids,excluded_paths)
             self.selected_ids=[p['candidate_id'] for p in picked]
             self.manual_trims={}  # Explicitly replace old overrides after confirmation
             self.persist_selection();self.refresh_plan()
             return bool(picked)
-        except (OSError,ValueError,sqlite3.Error) as exc:
+        except (OSError,ValueError,TypeError,AttributeError,sqlite3.Error) as exc:
             if not quiet:messagebox.showerror('AI 推薦失敗',str(exc))
             return False
 
@@ -468,10 +481,53 @@ class Application:
             return min(n,30) if self.test.get() else n
         except (ValueError,AssertionError):raise ValueError('片長請輸入 1～3600 秒。')
 
+    def prune_selection(self):
+        """Remove only invalid selections, preserving all remaining order and trims.
+
+        Back up the user's previous selection before changing it. Never touch media.
+        """
+        if not self.workspace_dir or self.running or not self.selected_ids:return
+        index=self.workspace_dir/'index.sqlite'
+        if not index.is_file():return
+        valid=[];trims=dict(self.manual_trims);warnings=[]
+        try:
+            with closing(readonly_db(index)) as db:
+                for key in self.selected_ids:
+                    row=db.execute("""SELECT c.id,m.path,m.kind,m.duration FROM candidates c
+                         JOIN media m ON c.path=m.path WHERE c.id=? AND m.error IS NULL""",(key,)).fetchone()
+                    if row is None or not Path(row[1]).is_file():
+                        warnings.append(f'[PRUNE] 無法使用的候選：{key}');trims.pop(key,None)
+                        continue
+                    valid.append(key)
+                    clip=trims.get(key)
+                    if clip is not None:
+                        try:
+                            start=float(clip['start']);end=float(clip['end']);duration=float(row[3] or 0)
+                            ok=(row[2]=='video' and math.isfinite(start) and math.isfinite(end)
+                                and 0<=start<end<=duration+0.005 and end-start>=0.5)
+                        except (TypeError,ValueError,KeyError,OverflowError):ok=False
+                        if not ok:
+                            trims.pop(key,None)
+                            warnings.append(f'[PRUNE] 裁切區間失效，已還原成自動取景：{Path(row[1]).name}')
+        except sqlite3.Error as exc:
+            self.plan_status.config(text='無法核對片單：'+str(exc))
+            return
+        if warnings:
+            previous=self.selection_path()
+            try:
+                if previous.is_file():
+                    shutil.copy2(previous,previous.with_name(previous.name+'.before_prune.bak'))
+            except OSError as exc:self.log_line('[WARN] 片單備份失敗：'+str(exc))
+            self.selected_ids=valid;self.manual_trims=trims
+            try:self.persist_selection()
+            except OSError as exc:self.log_line('[WARN] 片單儲存失敗：'+str(exc))
+            for msg in warnings:self.log_line(msg)
+
     def refresh_plan(self):
         self.plan_rows={}
         for row in self.plan_tree.get_children():self.plan_tree.delete(row)
         if not self.workspace_dir:return
+        self.prune_selection()
         if not self.selected_ids:
             self.plan_status.config(text='尚未選片，請從左邊加入或按「重選 AI 推薦」。');return
         try:
@@ -517,11 +573,19 @@ class Application:
 
     def on_available_select(self,_=None):
         keys=self.available.selection()
-        if keys:self.show_preview(self.page_rows.get(keys[0]))
+        if keys:
+            self.last_selection='available'
+            others=self.plan_tree.selection()
+            if others:self.plan_tree.selection_remove(others)
+            self.show_preview(self.page_rows.get(keys[0]))
 
     def on_plan_select(self,_=None):
         keys=self.plan_tree.selection()
-        if keys:self.show_preview(self.plan_rows.get(keys[0]))
+        if keys:
+            self.last_selection='plan'
+            others=self.available.selection()
+            if others:self.available.selection_remove(others)
+            self.show_preview(self.plan_rows.get(keys[0]))
 
     def show_preview(self,item):
         if not item:return
@@ -548,11 +612,16 @@ class Application:
                     cmd=[ffmpeg,'-nostdin','-v','error','-y']
                     if path==Path(item['path']) and item['kind']=='video':
                         cmd+=['-ss',str(item.get('candidate_position',item.get('position',0)))]
+                    tmp=dest.with_name(f'{key}.{token}.partial.png')
                     cmd+=['-i',str(path),'-frames:v','1','-vf',
-                          'scale=300:168:force_original_aspect_ratio=decrease,pad=300:168:(ow-iw)/2:(oh-ih)/2',str(dest)]
+                          'scale=300:168:force_original_aspect_ratio=decrease,pad=300:168:(ow-iw)/2:(oh-ih)/2',str(tmp)]
                     flags=getattr(subprocess,'CREATE_NO_WINDOW',0) if os.name=='nt' else 0
-                    subprocess.run(cmd,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,
-                                   stdin=subprocess.DEVNULL,check=True,timeout=35,creationflags=flags)
+                    try:
+                        subprocess.run(cmd,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,
+                                       stdin=subprocess.DEVNULL,check=True,timeout=35,creationflags=flags)
+                        tmp.replace(dest)
+                    finally:
+                        tmp.unlink(missing_ok=True)
                 self.events.put(('thumb',(token,str(dest),'')))
             except (OSError,subprocess.SubprocessError) as e:self.events.put(('thumb',(token,'',str(e)[:90])))
         threading.Thread(target=work,daemon=True).start()
@@ -560,11 +629,13 @@ class Application:
     def open_trim_preview(self):
         """Open a separate embedded player without interrupting the existing selection UI."""
         if self.running:return messagebox.showinfo('任務執行中','請先完成或停止目前的工作。')
-        selected=self.plan_tree.selection()
-        item=(self.plan_rows.get(selected[0]) if selected else None)
+        if self.trim_dialog is not None and self.trim_dialog.window.winfo_exists():
+            self.trim_dialog.window.lift();self.trim_dialog.window.focus_force();return
+        selected=self.available.selection() if self.last_selection=='available' else self.plan_tree.selection()
+        item=(self.page_rows.get(selected[0]) if self.last_selection=='available' else self.plan_rows.get(selected[0])) if selected else None
         if not item:
-            selected=self.available.selection()
-            item=(self.page_rows.get(selected[0]) if selected else None)
+            selected=self.plan_tree.selection() if self.last_selection=='available' else self.available.selection()
+            item=(self.plan_rows.get(selected[0]) if self.last_selection=='available' else self.page_rows.get(selected[0])) if selected else None
         if not item:return messagebox.showinfo('請先選片','請先在左側候選清單或右側片單中選取一段影片。')
         if item.get('kind')!='video':
             return messagebox.showinfo('照片素材','In／Out 裁切只適用影片，照片仍使用原本的顯示時間設定。')
@@ -578,20 +649,26 @@ class Application:
         if trim:
             start=float(trim['start']);end=float(trim['end'])
         elif key in self.plan_rows:
-            start=float(item['start']);end=start+float(item['seconds'])
+            selected_plan=self.plan_rows[key]
+            start=float(selected_plan['start']);end=start+float(selected_plan['seconds'])
         else:
             center=float(item.get('position') or 0)
             span=min(5.0,full)
             start=max(0.,min(full-span,center-span/2));end=start+span
 
         def save_trim(start,end):
+            if self.running:
+                messagebox.showwarning('無法變更裁切','分析或輸出進行中，請停止或完成工作後再修改片單。')
+                return False
             if key not in self.selected_ids:self.selected_ids.append(key)
             self.manual_trims[key]={'start':round(start,3),'end':round(end,3)}
             self.persist_selection()
             self.refresh_plan()
             self.tabs.select(self.tab_edit)
             self.log_line(f'[TRIM] {Path(item["path"]).name}: {start:.3f} - {end:.3f}s')
-        VideoTrimDialog(self.root,Path(item['path']),full,start,end,save_trim)
+            return True
+        self.trim_dialog=VideoTrimDialog(self.root,Path(item['path']),full,start,end,
+                                          save_trim,on_close=lambda:setattr(self,'trim_dialog',None))
 
     def validate_workspace(self,scan=False):
         if self.running:return False
@@ -652,6 +729,7 @@ class Application:
         self.launch([args],'render')
 
     def launch(self,tasks,action):
+        if self.trim_dialog is not None:self.trim_dialog.close()
         self.running=True;self.cancel_requested=False
         self.progress['value']=0;self.progress_label.config(text='任務準備中…')
         self.scan_btn.config(state='disabled');self.render_btn.config(state='disabled');self.stop_btn.config(state='normal')
@@ -668,8 +746,11 @@ class Application:
                      [sys.executable,'-u',str(ROOT/'vlog_maker.py')])+[args[0],'--out',out]+args[1:]
                 self.events.put(('stage',args[0]))
                 flags=getattr(subprocess,'CREATE_NO_WINDOW',0) if os.name=='nt' else 0
+                env=os.environ.copy()
+                env.update(PYTHONUTF8='1',PYTHONIOENCODING='utf-8')
                 process=subprocess.Popen(cmd,stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,text=True,encoding='utf-8',errors='replace',bufsize=1,creationflags=flags)
+                    stderr=subprocess.STDOUT,text=True,encoding='utf-8',errors='replace',bufsize=1,
+                    env=env,creationflags=flags)
                 self.process=process
                 for line in process.stdout:self.events.put(('log',line.rstrip()))
                 code=process.wait();self.process=None
@@ -745,6 +826,8 @@ class Application:
         self.root.after(100,self.drain)
 
     def check_env(self):
+        model_name=self.model.get().strip()
+        analysis_mode=self.mode.get()
         def work():
             checks=[]
             for name in ('ffmpeg','ffprobe'):
@@ -754,7 +837,7 @@ class Application:
                 with urlopen('http://127.0.0.1:11434/api/tags',timeout=3) as r:models=json.load(r).get('models',[])
                 names={x.get('name','').lower() for x in models}
                 checks.append('Ollama 服務：正常')
-                for name in ([self.model.get().strip()] + (['gemma3:4b'] if self.mode.get()=='balanced' else [])):
+                for name in ([model_name] + (['gemma3:4b'] if analysis_mode=='balanced' else [])):
                     checks.append(name+'：'+('已安裝' if name.lower() in names else '缺少模型'))
             except Exception:checks.append('Ollama 服務：無法連線')
             try:
@@ -778,6 +861,8 @@ class Application:
         if self.running:
             if not messagebox.askyesno('任務進行中','停止任務並關閉程式？'):return
             self.stop()
+        if self.trim_dialog is not None:
+            self.trim_dialog.close()
         self.save_settings();self.root.destroy()
 
 
