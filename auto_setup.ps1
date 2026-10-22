@@ -88,11 +88,18 @@ try {
         }
     }
 
-    Step '安裝 PyInstaller 到 Python 使用者環境'
-    & $python -m pip install --upgrade pyinstaller
+    Step '準備內建 VLC 播放器'
+    $vlcDll1 = Join-Path $env:ProgramFiles 'VideoLAN\VLC\libvlc.dll'
+    $vlcDll2 = Join-Path ${env:ProgramFiles(x86)} 'VideoLAN\VLC\libvlc.dll'
+    if (-not ((Test-Path $vlcDll1) -or (Test-Path $vlcDll2))) {
+        InstallWinget 'VideoLAN.VLC'
+    }
+    Step '安裝 PyInstaller / python-vlc'
+
+    & $python -m pip install --upgrade pyinstaller python-vlc
     if ($LASTEXITCODE -ne 0) { throw 'pip / PyInstaller 安裝失敗。' }
     Step '打包 Windows EXE'
-    & $python -m PyInstaller --noconfirm --clean --onedir --windowed --name AI_Vlog_Maker app.py
+    & $python -m PyInstaller --noconfirm --clean --onedir --windowed --hidden-import vlc --hidden-import video_preview --hidden-import cinematic_editor --name AI_Vlog_Maker app.py
     if ($LASTEXITCODE -ne 0) { throw 'PyInstaller 打包失敗。' }
     $dest = Join-Path $PSScriptRoot 'dist\AI_Vlog_Maker'
     if (-not (Test-Path (Join-Path $dest 'AI_Vlog_Maker.exe'))) { throw '找不到打包後的 EXE。' }

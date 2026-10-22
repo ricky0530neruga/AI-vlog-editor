@@ -1,73 +1,62 @@
-AI Vlog Maker V4.4.2 操作手冊（繁體中文）
-========================================
+AI Vlog Maker v1.4.0 — 繁體中文操作手冊
+=========================================
 
-一、V4.4.2 修正摘要
-V4.4.1 的「候選片段」只讀取 AI 分析成功（v2=1）的資料。
-如果某些片段尚未完成評分、模型回傳錯誤、或在 CPU 預篩時被跳過，
-它們雖然已經存在 SQLite，卻不會顯示在 GUI，可能造成整頁空白。
+【這版新增什麼】
+1. 在「② 挑選片段 → 剪輯輸出」頁，選取左邊候選影片或右邊已選影片。
+2. 點「▶ 預覽／裁切」：開啟內嵌 VLC 播放器，可播放、暫停、拖動進度條、調音量。
+3. 可按「設為目前時間」或直接輸入開始 In／結束 Out。
+4. 按「套用裁切並加入片單」，原片範圍會儲存為手動鎖定，片單長度旁標示 ✂。
+5. 依原本方式排列鏡頭，然後按「② 按選定片單開始剪輯輸出 MP4」。
+6. 只調整片段不需要再跑 Ollama；原始照片影片永遠只讀取。
 
-V4.4.2 修正：
-- 只要完成素材掃描，就建立候選片段資料（不需等待 Ollama 完成）。
-- ②挑選片段頁會顯示所有候選及狀態：已分析、未分析、預篩跳過、分析失敗。
-- 顯示已索引素材數量、候選總數、AI 完成數、預篩跳過數、分析失敗數。
-- 可用狀態篩選、檔名搜尋；點選鏡頭可看縮圖、AI 說明或失敗原因。
-- 已跳過／未評分的候選也可「手動加入片單」並輸出；分數僅暫定為中性值50，
-  不會寫回資料庫，也不代表它經過 AI 審查。
-- 若改過素材來源、導致工作區識別碼不同，可以點「選擇既有分析工作區」
-  找到過去的 AI_Vlog_... 資料夾（裡面須包含 index.sqlite）。
-- AI 分析全部失敗時，現在會顯示警告，而非宣稱所有素材成功分析。
-- 若分析階段意外失敗，仍可保留已掃描的候選素材供手動挑選。
+【安裝 / 手動操作】
+原本需要：Windows 10/11、Python 3.10+、FFmpeg / FFprobe、Ollama / gemma3 視覺模型。
+新增播放器需要：
+  A. 安裝「64-bit VLC Media Player」（須包含 libvlc.dll）：https://www.videolan.org/vlc/
+     或 PowerShell：winget install --id VideoLAN.VLC --exact
+  B. 在目前執行 GUI 的 Python 環境安裝：py -m pip install python-vlc
+  C. 重新開啟 Antigravity / PowerShell，在專案根目錄執行：py app.py
+     如果 VLC 安裝在非預設資料夾，可設定環境變數 VLC_DIR 指向有 libvlc.dll 的資料夾。
 
-二、更新方式（只替換四個檔案）
-1. 先在 Antigravity 對目前 V4.4.1 專案 Commit，或備份你自訂的 GUI 文字。
-2. 將本 PATCH 解壓後的 vlog_gui.py、vlog_maker.py、man.txt 覆蓋到專案根目錄。
-3. 新增 CHANGELOG_V4_4_2.txt。
-4. 其他檔案（cinematic_editor.py、app.py、start_gui.bat、安裝與打包腳本）不變。
-5. 原始照片、影片及 Vlogwork/index.sqlite 都不需移動或刪除。
-6. 使用 Python 模式可直接雙擊原本 start_gui.bat；若使用 EXE，需重新打包。
+【重要：別誤開到舊版 EXE】
+舊 start_gui.bat 只要看到 dist\AI_Vlog_Maker\AI_Vlog_Maker.exe 就會優先開啟該 EXE。
+所以更新 Python 原始碼後，測試新功能時請用「py app.py」；
+確認正常後，再執行新版 build_windows.bat 重新打包 Windows EXE。
+新版 auto_setup.ps1 可在有網路、可使用 winget 的 Windows 電腦嘗試安裝 VLC。
+EXE 不包含 VLC 的 DLL 與 plugins；移到其他電腦仍須另外安裝 VLC。
 
-三、操作流程
-① 掃描與 AI 分析
-- 加入一個或多個素材資料夾／檔案，選好輸出根目錄。
-- 按「① 開始掃描並分析」。完成後自動切換到②。
-- 即使 Ollama 分析失敗，候選鏡頭也應出現在②（狀態會標示原因）。
+【精確 In / Out 裁切】
+例：影片原長 30 秒，設定 In=00:12.000、Out=00:18.000，保留片長就是 6 秒。
+時間格式可輸入 12、12.5、00:12.500 或 00:01:12.500。
+最短裁切範圍為 0.5 秒，結束時間不得超過原影片長度。
+按「▶ 只播放裁切範圍」可反覆檢查 In-Out（需 VLC 安裝正常）。
+若 VLC 尚未安裝，視窗會顯示具體錯誤，仍可用數字輸入裁切時間並保存。
+照片暫不支援 In/Out，照片仍沿用原本的顯示秒數。
 
-② 挑選片段 → 剪輯輸出
-- 左側預設「全部」，會列出所有候選；可依狀態篩選或搜尋檔名。
-- 點選候選顯示靜態縮圖和 AI 評分／錯誤原因。
-- 將想保留的片段加入右側片單，使用上移／下移調整順序。
-- 未評分的片段可手動選入，但不會憑空獲得 AI 描述或 AI 評分。
-- 確認片單、片長、音樂後按「② 按選定片單開始剪輯輸出 MP4」。
-- 程式只使用你選定的片段，不會偷偷更換為其他 AI 推薦片段。
-- 輸出位置：工作區中的 Travel_Vlog_Final_V43.mp4（沿用 V4.3 渲染引擎命名）。
+【剪輯時長規則】
+- 手動鎖定的 In/Out 不會因目標總長度、AI 重新分配或音樂節奏對齊而被改掉。
+- 未鎖定鏡頭仍依原版演算法自動調整秒數。
+- 交叉淡化會重疊前後片段，因此「最終影片總長」可能小於鏡頭秒數總和。
+- 如果所有手動片段只有 20 秒，目標輸出設 180 秒也不會擅自重複或拉長素材。
+- 現有輸出檔名沿用 Travel_Vlog_Final_V43.mp4，GUI 覆蓋前會先詢問。
 
-③ 執行紀錄
-- AI 完成 0 個又看到「分析失敗」時，查看 [FAST ERROR]／[REVIEW ERROR]。
-- 100% CPU 上執行 Gemma 12B 可能很慢；建議使用平衡+CPU 省時。
+【保留的舊資料】
+工作區、index.sqlite、Ollama 評分和舊的 ui_selected_v441.json 均不必清除。
+手動裁切會寫入該 JSON 的 trims 欄位，按候選鏡頭 ID 保存；
+舊 JSON 只有 candidate_ids 沒有 trims 仍可正常讀取。
+不同來源清單可能建立不同工作區；可在 GUI 選擇既有工作區恢復。
+原始素材不會被刪除、複製覆蓋或直接修改。
 
-四、找不到上次分析資料時
-正常工作區位置：輸出根目錄\AI_Vlog_<12碼識別值>\index.sqlite
-系統依據「選取的素材來源清單」產生識別碼：更換資料夾路徑、加入單一檔案，
-或修改輸出根目錄，都可能切換到另一個工作區。
-此時在②按「選擇既有分析工作區」並指向含 index.sqlite 的資料夾即可復用。
-重新開始①掃描時，會依當前選取的素材來源使用其正常工作區，避免混淆資料。
+【增量安裝與 Git】
+- 先從 stable v1.3 建立開發分支，例如 git switch -c feature/v1.4-preview-trim。
+- 將增量包中的檔案放到原本專案根目錄（請先查看 diff，尤其是已自行修改過 GUI 文案的情況）。
+- 新增 video_preview.py；替換 vlog_gui.py、vlog_maker.py、cinematic_editor.py、
+  build_windows.bat、auto_setup.ps1、man.txt；新增 CHANGELOG_V1_4.txt。
+- 使用 py app.py 測試，確認剪輯正確後再 Commit / Push 到 feature 分支。
+- tests/ 內提供裁切、影片輸出與 GUI 儲存自動測試。
 
-五、必要的軟體與環境
-- Windows 10/11、Python 3.10+（直接執行 .py 時）；通常內建 Tkinter。
-- FFmpeg 與 FFprobe；可安裝於 PATH 或放在專案 tools 資料夾。
-- Ollama 服務與視覺模型：gemma3:4b（平衡初選）、gemma3:12b（複審）。
-- 原始素材永遠只讀取；index.sqlite、縮圖和輸出影片寫入工作區。
-- 影片播放預覽仍由縮圖與清單提供，尚未加入內嵌播放器。
-
-六、Git 增量更新
-在乾淨的 Git 工作區建立：git switch -c fix/v4.4.2-candidates
-更新檔案後檢查：git diff
-提交：git add vlog_gui.py vlog_maker.py man.txt CHANGELOG_V4_4_2.txt
-       git commit -m "fix: show indexed clips and analysis statuses"
-       git push -u origin fix/v4.4.2-candidates
-
-七、驗證情況
-已通過 Python 3.10 語法相容性檢查、SQLite 四種候選狀態檢查、
-Linux 虛擬顯示器中的 Tkinter 操作測試、手動加入未評分片段，
-以及由該片單實際輸出 1920×1080 MP4 的 FFmpeg 測試。
-尚未在 Windows 實機與打包 EXE 測試；請先在 Python 模式驗證介面。
+【已驗證 / 未驗證】
+已驗證：Python 語法、手動 In-Out 邏輯、SQLite 片單儲存、Linux 虛擬 GUI 操作、
+FFmpeg 輸出選定時間的實際影片，以及舊快取與既有分析流程的相容性。
+尚未在 Windows 實機確認：VLC 嵌入播放器、Windows HEVC/4K 解碼、PyInstaller EXE 發行。
+若有播放相容性問題，請先提供 GUI 錯誤訊息，以及 VLC / python-vlc 版本。

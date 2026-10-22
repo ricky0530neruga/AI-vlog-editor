@@ -92,7 +92,7 @@ def save_json_atomic(path, value):
 class Application:
     def __init__(self,root):
         self.root=root
-        self.root.title('AI Vlog Maker 4.4.2 — 修復候選片段顯示')
+        self.root.title('AI Vlog Maker v1.4 — 預覽與裁切')
         self.root.geometry('1150x800')
         self.root.minsize(920,670)
         self.events=queue.Queue()
@@ -114,7 +114,7 @@ class Application:
         self.candidate_filter=tk.StringVar(value='全部')
         self.workspace_dir=None
         self.override_workspace=None
-        self.page=0;self.page_rows={};self.selected_ids=[];self.plan_rows={}
+        self.page=0;self.page_rows={};self.selected_ids=[];self.plan_rows={};self.manual_trims={}
         self.photo=None;self.thumb_request=0
         self.make_ui();self.load_settings();self.update_workspace()
         root.after(100,self.drain)
@@ -126,7 +126,7 @@ class Application:
         outer=ttk.Frame(self.root,padding=12);outer.pack(fill='both',expand=True)
         hdr=ttk.Frame(outer);hdr.pack(fill='x')
         ttk.Label(hdr,text='AI Vlog Maker',font=('Segoe UI',17,'bold')).pack(side='left')
-        ttk.Label(hdr,text='V4.4.2 · 分階段剪輯',foreground='#586a78').pack(side='left',padx=12)
+        ttk.Label(hdr,text='v1.4 · 預覽與裁切',foreground='#586a78').pack(side='left',padx=12)
         self.workspace_text=ttk.Label(hdr,text='');self.workspace_text.pack(side='right')
         self.tabs=ttk.Notebook(outer);self.tabs.pack(fill='both',expand=True,pady=(10,6))
         self.tab_scan=ttk.Frame(self.tabs,padding=10)
@@ -213,6 +213,7 @@ class Application:
         self.available.bind('<<TreeviewSelect>>',self.on_available_select)
         ops=ttk.Frame(avail);ops.pack(fill='x',pady=5)
         ttk.Button(ops,text='加入選取片段 →',command=self.add_selection).pack(side='left')
+        ttk.Button(ops,text='▶ 預覽／裁切',command=self.open_trim_preview).pack(side='left',padx=(7,0))
         ttk.Button(ops,text='◀ 上一頁',command=lambda:self.page_by(-1)).pack(side='right')
         ttk.Button(ops,text='下一頁 ▶',command=lambda:self.page_by(1)).pack(side='right',padx=5)
         self.page_label=ttk.Label(avail,text='');self.page_label.pack(anchor='w')
@@ -341,7 +342,7 @@ class Application:
                             (workspace(self.inputs,out) if self.inputs and out else None))
         self.workspace_text.config(text=self.workspace_dir.name if self.workspace_dir else '尚未指定素材')
         if previous!=self.workspace_dir:
-            self.page=0;self.selected_ids=[]
+            self.page=0;self.selected_ids=[];self.manual_trims={}
             self.load_candidates(reset=True)
             self.load_selection_or_recommend()
 
@@ -420,6 +421,11 @@ class Application:
                 ids=payload.get('candidate_ids',[])
                 if not isinstance(ids,list) or not all(isinstance(x,str) for x in ids):raise ValueError('格式錯誤')
                 self.selected_ids=list(dict.fromkeys(ids))
+                saved=payload.get('trims',{})
+                if isinstance(saved,dict):
+                    self.manual_trims={key:value for key,value in saved.items()
+                                       if key in self.selected_ids and isinstance(value,dict)}
+                else:self.manual_trims={}
                 self.refresh_plan();return
             except (OSError,ValueError,TypeError) as exc:
                 self.log_line('選片記錄無法讀取：'+str(exc))
@@ -438,6 +444,7 @@ class Application:
                 length=self.get_length()
                 picked=core.choose(db,length,5.,int(self.min_score.get()),excluded_ids,excluded_paths)
             self.selected_ids=[p['candidate_id'] for p in picked]
+            self.manual_trims={}  # Explicitly replace old overrides after confirmation
             self.persist_selection();self.refresh_plan()
             return bool(picked)
         except (OSError,ValueError,sqlite3.Error) as exc:
@@ -451,7 +458,8 @@ class Application:
 
     def persist_selection(self):
         if not self.workspace_dir:return
-        save_json_atomic(self.selection_path(),{'version':'4.4.1','candidate_ids':self.selected_ids})
+        save_json_atomic(self.selection_path(),{'version':'1.4','candidate_ids':self.selected_ids,
+                                            'trims':{k:v for k,v in self.manual_trims.items() if k in self.selected_ids}})
         self.save_settings()
 
     def get_length(self):
@@ -469,16 +477,16 @@ class Application:
         try:
             import vlog_maker as core
             with closing(readonly_db(self.workspace_dir/'index.sqlite')) as db:
-                plan=core.choose_selected(db,self.selected_ids,self.get_length())
+                plan=core.choose_selected(db,self.selected_ids,self.get_length(),manual_trims=self.manual_trims)
         except (ValueError,sqlite3.Error,OSError) as exc:
             self.plan_status.config(text='片單需要修復：'+str(exc))
             return
         for i,part in enumerate(plan):
             key=part['candidate_id'];self.plan_rows[key]=part
             self.plan_tree.insert('','end',iid=key,values=(i+1,
-                f"{float(part['score'] or 0):.0f}",f"{part['seconds']:.1f}s",Path(part['path']).name))
+                f"{float(part['score'] or 0):.0f}",f"{part['seconds']:.1f}s{' ✂' if part.get('trim_locked') else ''}",Path(part['path']).name))
         total=sum(p['seconds'] for p in plan)
-        self.plan_status.config(text=f'已選 {len(plan)} 段 · 預估素材長度 {total:.1f}s（轉場後可能略短）')
+        self.plan_status.config(text=f'已選 {len(plan)} 段 · 素材合計 {total:.1f}s · 鎖定裁切 {sum(bool(p.get("trim_locked")) for p in plan)} 段（交叉淡化將縮短成片）')
         for key,row in self.page_rows.items():
             if self.available.exists(key):
                 self.available.set(key,'flag','✓' if key in self.selected_ids else '')
@@ -495,6 +503,7 @@ class Application:
         remove=set(self.plan_tree.selection())
         if remove:
             self.selected_ids=[x for x in self.selected_ids if x not in remove]
+            for key in remove:self.manual_trims.pop(key,None)
             self.persist_selection();self.refresh_plan()
 
     def move_plan(self,delta):
@@ -548,6 +557,42 @@ class Application:
             except (OSError,subprocess.SubprocessError) as e:self.events.put(('thumb',(token,'',str(e)[:90])))
         threading.Thread(target=work,daemon=True).start()
 
+    def open_trim_preview(self):
+        """Open a separate embedded player without interrupting the existing selection UI."""
+        if self.running:return messagebox.showinfo('任務執行中','請先完成或停止目前的工作。')
+        selected=self.plan_tree.selection()
+        item=(self.plan_rows.get(selected[0]) if selected else None)
+        if not item:
+            selected=self.available.selection()
+            item=(self.page_rows.get(selected[0]) if selected else None)
+        if not item:return messagebox.showinfo('請先選片','請先在左側候選清單或右側片單中選取一段影片。')
+        if item.get('kind')!='video':
+            return messagebox.showinfo('照片素材','In／Out 裁切只適用影片，照片仍使用原本的顯示時間設定。')
+        key=item.get('candidate_id',item.get('id'))
+        if not key:return messagebox.showerror('資料缺失','找不到候選鏡頭 ID。')
+        if not Path(item['path']).is_file():return messagebox.showerror('來源不存在',str(item['path']))
+        full=float(item.get('source_duration') or item.get('duration') or 0)
+        if full<=0:return messagebox.showerror('缺少影片長度','無法取得影片時間。請重新掃描。')
+        from video_preview import VideoTrimDialog
+        trim=self.manual_trims.get(key)
+        if trim:
+            start=float(trim['start']);end=float(trim['end'])
+        elif key in self.plan_rows:
+            start=float(item['start']);end=start+float(item['seconds'])
+        else:
+            center=float(item.get('position') or 0)
+            span=min(5.0,full)
+            start=max(0.,min(full-span,center-span/2));end=start+span
+
+        def save_trim(start,end):
+            if key not in self.selected_ids:self.selected_ids.append(key)
+            self.manual_trims[key]={'start':round(start,3),'end':round(end,3)}
+            self.persist_selection()
+            self.refresh_plan()
+            self.tabs.select(self.tab_edit)
+            self.log_line(f'[TRIM] {Path(item["path"]).name}: {start:.3f} - {end:.3f}s')
+        VideoTrimDialog(self.root,Path(item['path']),full,start,end,save_trim)
+
     def validate_workspace(self,scan=False):
         if self.running:return False
         if not self.inputs and (scan or self.override_workspace is None):
@@ -591,7 +636,7 @@ class Application:
         try:
             import vlog_maker as core
             with closing(readonly_db(self.workspace_dir/'index.sqlite')) as db:
-                core.choose_selected(db,self.selected_ids,self.get_length())
+                core.choose_selected(db,self.selected_ids,self.get_length(),manual_trims=self.manual_trims)
         except (sqlite3.Error,ValueError,OSError) as exc:
             return messagebox.showerror('無法剪輯',str(exc))
         final=self.workspace_dir/'Travel_Vlog_Final_V43.mp4'
@@ -712,6 +757,12 @@ class Application:
                 for name in ([self.model.get().strip()] + (['gemma3:4b'] if self.mode.get()=='balanced' else [])):
                     checks.append(name+'：'+('已安裝' if name.lower() in names else '缺少模型'))
             except Exception:checks.append('Ollama 服務：無法連線')
+            try:
+                from video_preview import _import_vlc
+                _import_vlc()
+                checks.append('內建播放器（LibVLC）：正常')
+            except Exception:
+                checks.append('內建播放器：需安裝 VLC（64 位元）及 python-vlc')
             self.events.put(('env','\n'.join(checks)))
         threading.Thread(target=work,daemon=True).start()
     def copy_log(self):

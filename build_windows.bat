@@ -7,9 +7,9 @@ if errorlevel 1 (
  pause
  exit /b 1
 )
-py -m pip install --upgrade pyinstaller
+py -m pip install --upgrade pyinstaller python-vlc
 if errorlevel 1 (pause & exit /b 1)
-py -m PyInstaller --noconfirm --clean --onedir --windowed --name AI_Vlog_Maker app.py
+py -m PyInstaller --noconfirm --clean --onedir --windowed --hidden-import vlc --hidden-import video_preview --hidden-import cinematic_editor --name AI_Vlog_Maker app.py
 if errorlevel 1 (pause & exit /b 1)
 if not exist "dist\AI_Vlog_Maker\tools" mkdir "dist\AI_Vlog_Maker\tools"
 if exist "tools\ffmpeg.exe" copy /y "tools\ffmpeg.exe" "dist\AI_Vlog_Maker\tools\" >nul

@@ -17,7 +17,6 @@ import statistics
 import subprocess
 import sys
 
-# pyrefly: ignore[missing-import]
 import vlog_maker as core
 
 FPS = 30
@@ -53,6 +52,8 @@ def _source_max(part):
 
 
 def _resize_preserving_center(part, seconds):
+    if part.get('trim_locked'):
+        raise ValueError('已鎖定的裁切區間不可自動更改。')
     seconds = round(max(0.5,seconds), 3)
     if part['kind'] == 'video':
         full = float(part.get('source_duration') or part['start'] + part['seconds'])
@@ -69,7 +70,7 @@ def _extend_for_crossfades(plan, target, crossfade):
         missing = target - (sum(p['seconds'] for p in plan) - overlap)
         if missing <= 0.05:
             break
-        adjustable = [p for p in plan if _source_max(p) - p['seconds'] > 0.06]
+        adjustable = [p for p in plan if not p.get('trim_locked') and _source_max(p) - p['seconds'] > 0.06]
         if not adjustable:
             break
         each = missing / len(adjustable)
@@ -116,6 +117,8 @@ def _nudge_cuts_to_onsets(plan, onsets):
     for index in range(len(plan)-1):
         a,b=plan[index],plan[index+1]
         position += a['seconds']
+        if a.get('trim_locked') or b.get('trim_locked'):
+            continue
         possible = min(onsets,key=lambda t:abs(t-position))
         adjustment=possible-position
         if abs(adjustment)>0.18 or abs(adjustment)<0.035:
@@ -230,7 +233,7 @@ def render_v43(plan, out, target, music=None, crf=21, force=False,
     for i,part in enumerate(plan,1):
         stat=Path(part['path']).stat()
         key=hashlib.sha256(json.dumps([str(part['path']),stat.st_size,stat.st_mtime,part['start'],
-                  part['seconds'],part.get('people'),part.get('role'),crf,preserve_audio,'V4.3'],sort_keys=True).encode()).hexdigest()[:20]
+                  part['seconds'],part.get('people'),part.get('role'),crf,preserve_audio,i==1,i==len(plan),'V1.4'],sort_keys=True).encode()).hexdigest()[:20]
         clip=clips/f'{key}.mp4';source_outputs.append(clip)
         reused=not force and clip.exists() and clip.stat().st_size>=1000
         if not reused:
