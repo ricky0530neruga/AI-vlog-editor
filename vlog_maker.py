@@ -28,7 +28,7 @@ VIDEOS={'.mp4','.mov','.m4v','.avi','.mkv','.webm','.mts','.m2ts'}
 PHOTOS={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
 DEFAULT_IN=r'C:\Users\SCE\Desktop\Travel1'
 DEFAULT_OUT=r'C:\Users\SCE\Desktop\Vlogwork'
-VERSION='4.4.2'
+VERSION='1.4.0-preview'
 
 def command(cmd, capture=False, binary=False):
     p=subprocess.run([exe(str(x)) if str(x) in ('ffmpeg','ffprobe') else str(x) for x in cmd], stdin=subprocess.DEVNULL,
@@ -369,7 +369,7 @@ def choose(db,target,shot,min_score,excluded_ids=None,excluded_paths=None):
                      'role':('opening' if r is opening else 'highlight' if r is climax else 'ending' if r is ending else 'journey')})
     return plan
 
-def choose_selected(db, candidate_ids, target, shot=5.0):
+def choose_selected(db, candidate_ids, target, shot=5.0, manual_trims=None):
     """Create a real edit plan from explicitly approved IDs, preserving GUI order.
 
     IDs must belong to indexed database candidates; unscored clips can be manually approved. Paths and timing
@@ -381,6 +381,11 @@ def choose_selected(db, candidate_ids, target, shot=5.0):
         raise ValueError('候選鏡頭 ID 格式錯誤。')
     if len(candidate_ids) != len(set(candidate_ids)):
         raise ValueError('同一個候選鏡頭不可重複選取。')
+    manual_trims = {} if manual_trims is None else manual_trims
+    if not isinstance(manual_trims,dict):
+        raise ValueError('手動裁切資料必須是物件。')
+    if any(key not in candidate_ids for key in manual_trims):
+        raise ValueError('手動裁切中含未選取的鏡頭 ID。')
     previous_factory=db.row_factory
     db.row_factory=sqlite3.Row
     try:
@@ -403,37 +408,60 @@ def choose_selected(db, candidate_ids, target, shot=5.0):
             rows.append(r)
     finally:
         db.row_factory=previous_factory
-    # Keep user order exactly. Never add unrelated clips back via AI auto selection.
-    lengths=[]
+    # Keep approved order. User trim boundaries are authoritative and cannot be
+    # re-centred to the AI candidate or shortened to meet a requested total.
+    lengths=[]; starts=[]; locked=[]
     for row in rows:
-        cap=min(11.,float(row['duration'])) if row['kind']=='video' else 11.
-        lengths.append(min(cap,max(.5,float(shot))))
+        key=row['id']; full=float(row['duration'] or 0)
+        custom=manual_trims.get(key)
+        if custom is not None:
+            try:
+                begin=float(custom['start']);finish=float(custom['end'])
+            except (ValueError,TypeError,KeyError,OverflowError) as exc:
+                raise ValueError(f'手動裁切資料無效：{key}') from exc
+            if not (math.isfinite(begin) and math.isfinite(finish) and
+                    0 <= begin < finish <= full+0.005 and finish-begin >= 0.5):
+                raise ValueError(f'裁切區間不合法：{row["path"]} ({begin:.3f}～{finish:.3f}s，原片 {full:.3f}s)')
+            if row['kind'] != 'video':
+                raise ValueError('手動 In／Out 只支援影片，照片請使用一般片長設定。')
+            lengths.append(round(finish-begin,3));starts.append(round(begin,3));locked.append(True)
+        else:
+            cap=min(11., full) if row['kind']=='video' else 11.
+            lengths.append(min(cap,max(.5,float(shot))))
+            starts.append(None);locked.append(False)
+    # Distribute the soft target only among AUTO clips. Locked clips are never
+    # adjusted to make the project reach an arbitrary requested duration.
     for _ in range(15):
         remaining=float(target)-sum(lengths)
         if abs(remaining)<0.03:break
         if remaining>0:
-            ids=[i for i,r in enumerate(rows) if lengths[i] <
-                 (min(11.,float(r['duration'])) if r['kind']=='video' else 11.)-.03]
-        else:ids=[i for i,v in enumerate(lengths) if v>min(1.5,(min(11.,float(rows[i]['duration'])) if rows[i]['kind']=='video' else 11.))+.03]
-        if not ids:break
-        delta=remaining/len(ids)
-        for i in ids:
+            adjust=[i for i,row in enumerate(rows) if not locked[i] and lengths[i] <
+                (min(11.,float(row['duration'])) if row['kind']=='video' else 11.)-.03]
+        else:
+            adjust=[i for i,row in enumerate(rows) if not locked[i] and lengths[i] >
+                min(1.5,(min(11.,float(row['duration'])) if row['kind']=='video' else 11.))+.03]
+        if not adjust:break
+        delta=remaining/len(adjust)
+        for i in adjust:
             cap=min(11.,float(rows[i]['duration'])) if rows[i]['kind']=='video' else 11.
             lengths[i]=max(min(1.5,cap),min(cap,lengths[i]+delta))
     highlight=max(range(len(rows)),key=lambda i:float(rows[i]['event'] or 0)) if len(rows)>2 else -1
     plan=[]
-    for i,(r,length) in enumerate(zip(rows,lengths)):
+    for i,(row,length) in enumerate(zip(rows,lengths)):
         length=round(length,3)
-        if length < .45:continue
-        start=(max(0.,min(float(r['duration'])-length,float(r['position'])-length/2))
-               if r['kind']=='video' else 0.)
+        if length<.45:raise ValueError('片段長度過短，無法輸出：'+row['path'])
+        if locked[i]:
+            begin=starts[i]
+        else:
+            begin=(max(0.,min(float(row['duration'])-length,float(row['position'])-length/2))
+                   if row['kind']=='video' else 0.)
         role=('opening' if i==0 else 'ending' if i==len(rows)-1 else
               'highlight' if i==highlight else 'journey')
-        plan.append({'candidate_id':r['id'],'path':r['path'],'kind':r['kind'],
-                     'start':round(start,3),'seconds':length,
-                     'score':r['score'],'event':r['event'],'category':r['category'],
-                     'description':r['description'],'people':r.get('people'),
-                     'source_duration':r['duration'],'candidate_position':r['position'],
+        plan.append({'candidate_id':row['id'],'path':row['path'],'kind':row['kind'],
+                     'start':round(begin,3),'seconds':length,'trim_locked':locked[i],
+                     'score':row['score'],'event':row['event'],'category':row['category'],
+                     'description':row['description'],'people':row.get('people'),
+                     'source_duration':row['duration'],'candidate_position':row['position'],
                      'role':role})
     return plan
 
@@ -536,7 +564,7 @@ def main():
         if a.selection_file and a.stage in ('plan','render','all'):
             payload=json.loads(a.selection_file.read_text(encoding='utf-8'))
             if not isinstance(payload,dict):raise ValueError('片單必須是 JSON 物件')
-            selection_plan=choose_selected(db,payload.get('candidate_ids'),a.seconds,a.shot)
+            selection_plan=choose_selected(db,payload.get('candidate_ids'),a.seconds,a.shot,manual_trims=payload.get('trims',{}))
             print(f'[MANUAL SELECTION] 採用 {len(selection_plan)} 個選定鏡頭',flush=True)
         if a.stage=='plan':
             plan=(selection_plan if selection_plan is not None else
