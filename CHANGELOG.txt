@@ -42,16 +42,7 @@ v1.4.0 — 內建播放器與裁切
 - 渲染路徑讀取 trims 並將其鎖定；自動湊片長及音樂切點不再更改鎖定的來源範圍。
 - 補上原本 V4.3 淡入淡出片段快取未區分第一／最後片段的鍵值條件。
 
-【修改檔案】
-- vlog_gui.py
-- video_preview.py
-- vlog_maker.py
-- man.txt（增補說明）
-
-【新增檔案】
-- tests/test_hotfix_v141.py
-- CHANGELOG_V1_4_HOTFIX.txt
-- README_HOTFIX.txt
+1.4 Stability Hotfix（開發分支修正包）
 
 【已修正】
 1. 修正左側候選片段已加入片單時，開啟預覽／裁切可能發生 KeyError。
