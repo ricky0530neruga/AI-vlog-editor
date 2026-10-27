@@ -1,3 +1,6 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 """Optional Qt smoke test; requires PySide6 and a display (or QT_QPA_PLATFORM=offscreen)."""
 import importlib.util
 import os

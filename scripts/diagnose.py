@@ -22,9 +22,10 @@ def main():
     print('Python:', sys.version.split()[0], sys.executable)
     print('Platform:', platform.platform())
     ready = True
-    for label, module in [('PySide6', 'PySide6'), ('python-vlc', 'vlc'), ('PyInstaller', 'PyInstaller')]:
+    for label, module in [('PySide6', 'PySide6'), ('python-vlc', 'vlc')]:
         ok = importlib.util.find_spec(module) is not None
         ready = status(label, ok) and ready
+    status('PyInstaller (optional for build)', importlib.util.find_spec('PyInstaller') is not None)
     for name in ('ffmpeg','ffprobe'):
         cmd = executable(name)
         ready = status(name, bool(cmd), cmd or 'not found') and ready
@@ -36,7 +37,7 @@ def main():
             candidates = [p / 'libvlc.dll', p / 'VideoLAN' / 'VLC' / 'libvlc.dll']
             vlc_paths.extend(str(x) for x in candidates if x.is_file())
     status('VLC libvlc.dll', bool(vlc_paths), vlc_paths[0] if vlc_paths else 'install 64-bit VLC for video preview')
-    print('APP entry:', 'app.py found' if (ROOT/'app.py').is_file() else 'app.py missing')
+    print('APP entry:', 'src/app.py found' if (ROOT/'src'/'app.py').is_file() else 'src/app.py missing')
     print('Note: External AI models and Windows GUI/EXE behavior require separate manual testing.')
     return 0 if ready else 1
 

@@ -1,37 +1,34 @@
-AI Vlog Maker v1.5 — 快速使用指南（PySide6 Alpha）
-==================================================
+AI Vlog Maker v1.6 — 快速開始（安裝精靈 Alpha）
+==============================================
 
-第一次在 Windows 執行：
-  1. 執行 setup_windows.bat（建立 .venv，安裝 PySide6／python-vlc）。
-  2. 執行 check_env.bat（確認 FFmpeg、Ollama、VLC）。
-  3. 執行 start_gui.bat（啟動全新 PySide6 GUI）。
+【新電腦安裝：不需要 Python】
+  在已建置的 AI_Vlog_Maker_Setup 資料夾中，
+  雙擊 Setup_AI_Vlog_Maker.bat，按照五個步驟完成檢查／安裝。
+  最後從選定目錄雙擊 Start_AI_Vlog_Maker.bat。
 
-剪輯流程：
-  ① 素材與 AI 分析：加入影片／照片，執行掃描及 AI 分析。
-     已經分析過的來源，可以沿用既有工作區，免重跑 Ollama。
-  ② 剪輯工作台：從候選清單加入片單；拖曳右側片單排序。
-     點選下方時間軸可定位鏡頭；雙擊影片或按「預覽／裁切」
-     使用 VLC 播放，精確設定 In／Out，按「套用裁切」。
-     Ctrl+Z 復原、Ctrl+Y 重做（限本次執行階段）。
-  ③ 設定背景音樂、轉場和音量，點「輸出 MP4」。
-     「執行紀錄」可檢查 AI 與 FFmpeg 進度。
+【開發電腦產出正式安裝包】
+  先準備 Python、PySide6、python-vlc、PyInstaller、FFmpeg／FFprobe。
+  雙擊 build_windows.bat，產生 dist/AI_Vlog_Maker_Setup.zip。
+  原始碼 ZIP 不含 Windows EXE，不能直接當作正式安裝包。
 
-重要提醒：
-  - 新 UI 尚屬 V1.5 Alpha；不要直接覆蓋 V1.4 Stable，先用 Git 分支測試。
-  - 這次「時間軸」可檢視鏡頭與選取，鏡頭排序在右側片單拖曳；
-    精確 In／Out 在 VLC 裁切視窗處理。全片粗剪預覽留待下一階段。
-  - 原始照片、影片不會被改寫；手動裁切不會被 AI 自動湊片長覆蓋。
-  - 片單仍使用 V1.4 的 ui_selected_v441.json；重建 AI 片單會清除人工修改。
-  - 交叉淡化會縮短最終總長度；時間軸標示的是來源鏡頭加總。
+【剪輯五步驟】
+  ① 加入影片或照片，選擇輸出位置。
+  ② 掃描與 AI 分析（已分析過可直接沿用工作區）。
+  ③ 在剪輯工作台加入、移除、排序片段。
+  ④ 預覽與裁切：設定 In／Out，確認手動鏡頭範圍。
+  ⑤ 設定音樂、轉場，輸出 MP4。
 
-Windows 工具：
-  start_gui.bat      啟動新版 Qt GUI 原始碼
-  start_legacy.bat   必要時啟動舊版 Tkinter GUI（作為退路）
-  start_release.bat  執行已打包 EXE（需重新建置）
-  setup_windows.bat  建立開發環境
-  check_env.bat      環境診斷
-  build_windows.bat  重新打包 Windows EXE
+【開發工具（原始碼專案）】
+  setup_windows.bat  安裝原始碼的 Python 依賴。
+  start_gui.bat      執行 PySide6 原始碼。
+  start_release.bat  執行本機已打包的 EXE。
+  build_windows.bat  建立正式 EXE 和五步驟安裝包。
 
-完整教學：docs/USER_GUIDE.md
-安裝與故障：docs/INSTALL_WINDOWS.md
-程式開發：docs/DEVELOPMENT.md
+【完整說明】
+  installer/README_INSTALLER.md ：全新 Windows 安裝流程與路徑限制。
+  docs/USER_GUIDE.md        ：剪輯操作。
+  docs/INSTALL_WINDOWS.md   ：開發環境與故障排查。
+  docs/DEVELOPMENT.md       ：Git、開發與測試。
+
+注意：v1.6 安裝精靈尚未在乾淨的 Windows 電腦實測，不應發布 Stable。
+原始影片不會覆寫，舊版片單仍相容 ui_selected_v441.json。

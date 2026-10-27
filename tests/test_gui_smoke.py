@@ -1,5 +1,9 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 """Tk smoke test: run under a virtual display on Linux, or normal Windows."""
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -10,6 +14,14 @@ import vlog_maker as core
 import vlog_gui
 import video_preview
 
+def _can_open_tk():
+    try:
+        root=tk.Tk(); root.withdraw(); root.destroy()
+        return True
+    except tk.TclError:
+        return False
+
+@unittest.skipUnless(_can_open_tk(), 'Tk display not available')
 class PreviewGuiSmoke(unittest.TestCase):
     def test_plan_preview_save(self):
         with tempfile.TemporaryDirectory() as folder:

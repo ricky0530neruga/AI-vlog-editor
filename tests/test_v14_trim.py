@@ -1,3 +1,6 @@
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 """Run: py -m unittest discover -s tests -v (requires FFmpeg for integration test)."""
 import json
 from pathlib import Path

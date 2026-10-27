@@ -1,33 +1,29 @@
-# AI Vlog Maker — v1.5 PySide6 開發筆記
+# 開發與版本管理
 
-## 架構
+## 專案結構
 
-- `app.py`：預設啟動 PySide6；`--legacy-gui` 啟動原 Tkinter；`--cli` 繼續執行原本 vlog_maker CLI。
-- `vlog_qt.py`：新主視窗（左側導覽、素材清單、片單、時間軸、紀錄）。
-- `qt_video_preview.py`：Qt 裁切視窗，使用 python-vlc 與系統 LibVLC。
-- `qt_store.py`：與 UI 無關的工作區、SQLite 唯讀查詢、selection JSON 兼容工具。
-- `trim_times.py`、`vlc_loader.py`：裁切格式與 VLC 依賴的共用工具。
-- `vlog_maker.py`、`cinematic_editor.py`：保持 v1.4 內容，不在這一輪重寫 AI 與 FFmpeg。
-- `vlog_gui.py`、`video_preview.py`：保留為 Tkinter 舊版退路。
+- `src/`：Python 主程式、PySide6／Tkinter UI、AI 分析與 FFmpeg 核心。
+- `config/`：pip 套件需求（不是使用者剪輯資料）。
+- `scripts/windows/`：安裝與 Python 環境自動偵測腳本。
+- `scripts/`：診斷與測試執行器。
+- `tests/`：單元、回歸與可選的 Qt Smoke Test。
+- `tools/`：放置 FFmpeg 與 FFprobe（可改用 PATH）。
+- `docs/`：說明書和歷史文件。
 
-## 測試
+## 常用指令
 
 ```powershell
-.venv\Scripts\python.exe -m unittest discover -s tests -v
+py src/app.py
+py src/app.py --legacy-gui
+py src/app.py --cli --help
+py scripts/run_tests.py
+py scripts/diagnose.py
 ```
 
-- `tests/test_v15_qt_store.py`：可在沒有 PySide6 的環境跑，驗證舊工作區、JSON、裁切格式。
-- `tests/test_v15_qt_smoke.py`：需要 PySide6 + 可用視窗環境；檢查 Qt 主介面建立。
-- 舊版 v1.4 渲染測試應繼續通過。
-- GUI 的真實影片播放、libvlc Windows HWND、EXE 打包需要在 Windows 測試，不可以用通過語法測試代替。
+## 安全原則
 
-## 工作分支
-
-建議從 `main`（v1.4 Stable）建立 `feature/v1.5-qt`，確保更動可隨時回退。v1.5 Alpha 測試期間不要自動升版 `main`。
-
-## 已知限制／待開發
-
-- PySide6 時間軸第一階段僅支援選取；列拖曳排序與 In/Out 對話框已提供，但尚非專業多軌時間軸。
-- v1.4 原有的節拍、輸出快取與舊 SQLite 轉換限制仍在。
-- v1.4 版本路徑與 legacy JSON 名稱為相容性而保留。
-- 視窗化 EXE 子行程使用 `--cli-log` 專用 UTF-8 進度紀錄檔；需要 Windows 實測確認打包後可以即時更新。
+- 此版本**由既有 V1.4 Stable + V1.5 Alpha + Launcher Fix 更新包整合**，不是直接下載 GitHub 最新 main。
+- 請先在 `feature/v1.5-qt-structure` 測試，並用 Git Diff 核對自己新增的程式。
+- 不搬移原有旅行素材、使用者工作區、SQLite 或 `ui_selected_v441.json`；它們的目錄由使用者選擇。
+- `dist/`、`build/`、`.venv/` 為執行或打包生成，不包含在原始碼交付包。
+- Windows BAT、LibVLC 及 PyInstaller 尚需 Windows 實機驗證；不可直接標 Stable。

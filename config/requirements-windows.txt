@@ -1,0 +1,4 @@
+# Only Qt Widgets/Core/Gui are used; do not download the full Addons/WebEngine bundle.
+PySide6-Essentials>=6.10,<7
+python-vlc>=3.0.21203
+# PyInstaller is installed on-demand by build_windows.bat.
