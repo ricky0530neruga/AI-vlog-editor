@@ -172,6 +172,13 @@ def main():
     strategy.add_argument('--out', type=Path, required=True)
     strategy.add_argument('--strategy', choices=['fixed','scene'], required=True)
     strategy.add_argument('--no-technical', action='store_true')
+    assess = sub.add_parser('assess')
+    assess.add_argument('--manifest', type=Path, required=True)
+    assess.add_argument('--candidates', type=Path, required=True)
+    assess.add_argument('--out', type=Path, required=True)
+    assess.add_argument('--cache', type=Path)
+    assess.add_argument('--model', default='gemma3:4b')
+    assess.add_argument('--limit', type=int, default=12, help='0=all candidates; default bounded review')
     args = parser.parse_args()
     read = lambda p: json.loads(p.read_text(encoding='utf-8'))
     if args.command == 'manifest':
@@ -181,6 +188,44 @@ def main():
     elif args.command == 'run':
         if args.seconds <= 0 or args.analyze_limit < 0: parser.error('Invalid seconds/analyze-limit')
         return 0 if run(read(args.manifest), args.out, args.index, args.analyze, args.model, args.seconds,args.analyze_limit)['status']=='ok' else 1
+    elif args.command == 'assess':
+        from assessment_v16 import AssessmentCache, model_identity, SCHEMA_VERSION, PROMPT_VERSION
+        data=read(args.manifest); verify_manifest(data); source=read(args.candidates)
+        if source['manifest_id'] != data['manifest_id']: raise ValueError('Candidate manifest mismatch')
+        if args.limit < 0: raise ValueError('Invalid review limit')
+        media={i['path']:i['sha256'] for i in data['media']}
+        candidates=source['candidates']
+        for c in candidates:
+            if media.get(c['path']) != c['source_sha256']: raise ValueError('Candidate source mismatch')
+        output=safe_output(args.out,data)
+        cache_path=args.cache or output/'assessments.sqlite'
+        for item in data['media']:
+            if Path(cache_path).resolve().is_relative_to(Path(item['path']).parent): raise ValueError('Cache cannot be written under source directory')
+        model,digest=model_identity(args.model)
+        # Round-robin sources before spending the bounded LLM budget.
+        grouped={}
+        for c in candidates: grouped.setdefault(c['path'],[]).append(c)
+        pending=[]
+        while any(grouped.values()):
+            for path in sorted(grouped):
+                if grouped[path]: pending.append(grouped[path].pop(0))
+        if args.limit: pending=pending[:args.limit]
+        result=dict(schema_version=SCHEMA_VERSION,prompt_version=PROMPT_VERSION,manifest_id=data['manifest_id'],
+                    model=model,model_digest=digest,candidate_count=len(candidates),review_limit=args.limit,
+                    candidates=[],errors=[],quality_status='尚未評估',mode='v16-assessment')
+        started=time.monotonic();cache=AssessmentCache(cache_path)
+        try:
+            for c in pending:
+                evaluated=cache.assess(c,model,digest)
+                result['candidates'].append(dict(c,analysis=evaluated))
+                if evaluated['status']=='failed':result['errors'].append(dict(id=c['id'],error=evaluated['error']))
+                save_json_atomic(output/'result.json',result)
+        finally:cache.close()
+        result['analysis_seconds']=time.monotonic()-started
+        result['status']='failed' if result['errors'] else 'ok'
+        verify_manifest(data);save_json_atomic(output/'result.json',result)
+        (output/'report.md').write_text(report_markdown(result),encoding='utf-8')
+        return 1 if result['errors'] else 0
     elif args.command == 'candidates':
         from candidate_engine import generate, near_duplicate
         data = read(args.manifest); verify_manifest(data)
