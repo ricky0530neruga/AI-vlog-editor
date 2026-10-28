@@ -113,17 +113,21 @@ def safe_output(output, data):
     return output
 
 
-def run(data, output, index=None, analyze=False, model='gemma3:4b', target=180):
+def run(data, output, index=None, analyze=False, model='gemma3:4b', target=180, analyze_limit=0):
     verify_manifest(data)
     output = safe_output(output, data)
     result = dict(schema_version=1, manifest_id=data['manifest_id'], status='ok',
                   mode='cache-replay' if index else 'legacy-live', quality_status='尚未評估',
-                  errors=[], model=model, target_seconds=target)
+                  errors=[], model=model, target_seconds=target, analyze_limit=analyze_limit)
     result['revision'] = subprocess.run(['git','rev-parse','HEAD'], capture_output=True,
                                         text=True, check=True).stdout.strip()
     started = time.monotonic()
     try:
         if index:
+            with closing(readonly_db(index)) as source:
+                indexed = {r[0] for r in source.execute('SELECT path FROM media WHERE error IS NULL')}
+            if indexed != {i['path'] for i in data['media']}:
+                raise ValueError('Cache sources do not match the fixed manifest')
             result.update(replay(index, target=target))
         else:
             with closing(core.connect(output/'legacy')) as db:
@@ -134,7 +138,7 @@ def run(data, output, index=None, analyze=False, model='gemma3:4b', target=180):
                     raise RuntimeError(f'Incomplete media scan: {scanned}/{len(data["media"])}; check FFprobe')
                 scan_end = time.monotonic()
                 if analyze:
-                    core.analyze(db, output/'legacy', model, 0, 8, 36, False,
+                    core.analyze(db, output/'legacy', model, analyze_limit, 8, 36, False,
                                  mode='quality', temporal=False, timeout=120)
                 analysis_end = time.monotonic()
             result.update(replay(output/'legacy'/'index.sqlite', target=target))
@@ -160,8 +164,14 @@ def main():
     execute.add_argument('--out', type=Path, required=True)
     execute.add_argument('--index', type=Path); execute.add_argument('--analyze', action='store_true')
     execute.add_argument('--model', default='gemma3:4b'); execute.add_argument('--seconds', type=int, default=180)
+    execute.add_argument('--analyze-limit', type=int, default=0)
     diff = sub.add_parser('compare'); diff.add_argument('before', type=Path); diff.add_argument('after', type=Path)
     diff.add_argument('--out', type=Path, required=True)
+    strategy = sub.add_parser('candidates')
+    strategy.add_argument('--manifest', type=Path, required=True)
+    strategy.add_argument('--out', type=Path, required=True)
+    strategy.add_argument('--strategy', choices=['fixed','scene'], required=True)
+    strategy.add_argument('--no-technical', action='store_true')
     args = parser.parse_args()
     read = lambda p: json.loads(p.read_text(encoding='utf-8'))
     if args.command == 'manifest':
@@ -169,8 +179,26 @@ def main():
         save_json_atomic(output/'manifest.json', data)
         save_json_atomic(output/'annotations.json', annotation_template(data))
     elif args.command == 'run':
-        if args.seconds <= 0: parser.error('--seconds must be positive')
-        return 0 if run(read(args.manifest), args.out, args.index, args.analyze, args.model, args.seconds)['status']=='ok' else 1
+        if args.seconds <= 0 or args.analyze_limit < 0: parser.error('Invalid seconds/analyze-limit')
+        return 0 if run(read(args.manifest), args.out, args.index, args.analyze, args.model, args.seconds,args.analyze_limit)['status']=='ok' else 1
+    elif args.command == 'candidates':
+        from candidate_engine import generate, near_duplicate
+        data = read(args.manifest); verify_manifest(data)
+        output = safe_output(args.out, data); started = time.monotonic()
+        result = dict(schema_version=1, manifest_id=data['manifest_id'], mode=args.strategy,
+                      candidates=[], errors=[], quality_status='尚未評估')
+        for item in data['media']:
+            try: result['candidates'].extend(generate(item,args.strategy,technical=not args.no_technical))
+            except Exception as exc: result['errors'].append(dict(path=item['path'],error=str(exc)))
+        result['candidate_count'] = len(result['candidates'])
+        result['analysis_seconds'] = time.monotonic()-started
+        result['duplicate_ratio'] = (sum(any(near_duplicate(c.get('technical',{}),p.get('technical',{}))
+            for p in result['candidates'][:i]) for i,c in enumerate(result['candidates']))/result['candidate_count']) if result['candidate_count'] and not args.no_technical else None
+        result['status'] = 'failed' if result['errors'] else 'ok'
+        verify_manifest(data)
+        save_json_atomic(output/'result.json',result)
+        (output/'report.md').write_text(report_markdown(result),encoding='utf-8')
+        return 1 if result['errors'] else 0
     else:
         data = compare(read(args.before), read(args.after))
         if args.out.exists(): raise ValueError('Comparison output already exists')
