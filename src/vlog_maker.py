@@ -29,7 +29,7 @@ VIDEOS={'.mp4','.mov','.m4v','.avi','.mkv','.webm','.mts','.m2ts'}
 PHOTOS={'.jpg','.jpeg','.png','.webp','.bmp','.tif','.tiff'}
 DEFAULT_IN=str(Path(os.environ.get('AI_VLOG_INPUT_DIR') or Path.home()/'Videos'))
 DEFAULT_OUT=str((ROOT.parent if ROOT.name.lower()=='app' else ROOT)/'Workspaces') if os.environ.get('AI_VLOG_PORTABLE')=='1' else str(Path.home()/'Videos'/'AI Vlog Maker')
-VERSION='1.5.0-alpha'
+VERSION='1.6.0-experimental'
 
 def command(cmd, capture=False, binary=False):
     p=subprocess.run([exe(str(x)) if str(x) in ('ffmpeg','ffprobe') else str(x) for x in cmd], stdin=subprocess.DEVNULL,

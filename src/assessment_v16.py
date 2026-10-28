@@ -109,6 +109,7 @@ class AssessmentCache:
             assessment=decode(raw)
         except Exception as exc: error=f'{type(exc).__name__}: {exc}'
         status='failed' if error else 'ok'
+        if raw is not None and not isinstance(raw,str): raw=repr(raw)
         self.db.execute('INSERT OR REPLACE INTO assessments VALUES(?,?,?,?,?,?,?,?,?,?,?)',
             (key,candidate['id'],model,digest,PROMPT_VERSION,SCHEMA_VERSION,status,
              json.dumps(assessment,ensure_ascii=False) if assessment else None,raw,error,(row[2] if row else 0)+1))

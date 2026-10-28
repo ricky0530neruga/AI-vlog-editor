@@ -13,6 +13,10 @@ class BenchmarkTests(unittest.TestCase):
             source=Path(tmp)/'a.mp4';source.write_bytes(b'fixed')
             a=bench.manifest([source]);self.assertEqual(a,bench.manifest([source]))
             self.assertEqual(bench.annotation_template(a)['status'],'尚未評估')
+            labels=dict(schema_version=1,manifest_id=a['manifest_id'],segments=[dict(sha256=a['media'][0]['sha256'],start=0,end=2,decision='include')])
+            self.assertEqual(bench.validate_annotations(a,labels),labels)
+            labels['segments'][0]['end']=float('nan')
+            with self.assertRaises(ValueError):bench.validate_annotations(a,labels)
             source.write_bytes(b'other')
             with self.assertRaises(ValueError):bench.verify_manifest(a)
 

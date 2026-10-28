@@ -1,4 +1,4 @@
-"""AI Vlog Maker v1.5 — PySide6 interface migration.
+"""AI Vlog Maker v1.6 — PySide6 interface with protected recommendation previews.
 
 Runs the original v1.4 scan/analyze/selection/render engine unmodified.
 Keeps the v1.4 workspace hash and ui_selected_v441.json file.

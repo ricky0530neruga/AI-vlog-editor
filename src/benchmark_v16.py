@@ -14,6 +14,13 @@ import vlog_maker as core
 from qt_store import readonly_db, save_json_atomic
 
 
+def provenance():
+    revision=subprocess.run(['git','rev-parse','HEAD'],capture_output=True,text=True,check=True).stdout.strip()
+    dirty=subprocess.run(['git','diff','--quiet','--','src'],check=False).returncode!=0
+    hashes={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path(__file__).parent.glob('*.py'))}
+    return dict(revision=revision,python=sys.version.split()[0],source_dirty=dirty,source_fingerprints=hashes)
+
+
 def fingerprint(path):
     digest = hashlib.sha256()
     with Path(path).open('rb') as stream:
@@ -45,6 +52,21 @@ def annotation_template(data):
     return dict(schema_version=1, manifest_id=data['manifest_id'],
                 status='尚未評估', segments=[],
                 instructions='segments: {sha256, start, end, decision: include|exclude, note}; seconds in source time')
+
+
+def validate_annotations(data, labels):
+    import math
+    if labels.get('schema_version') != 1 or labels.get('manifest_id') != data['manifest_id']:
+        raise ValueError('Annotation version/manifest mismatch')
+    known={i['sha256'] for i in data['media']}
+    if not isinstance(labels.get('segments'),list):raise ValueError('segments must be a list')
+    for label in labels['segments']:
+        if label.get('sha256') not in known or label.get('decision') not in {'include','exclude'}:
+            raise ValueError('Invalid annotation source/decision')
+        times=[label.get(k) for k in ('start','end')]
+        if any(isinstance(t,bool) or not isinstance(t,(int,float)) or not math.isfinite(t) for t in times) or not 0<=times[0]<times[1]:
+            raise ValueError('Invalid annotation interval')
+    return labels
 
 
 def verify_manifest(data):
@@ -97,10 +119,13 @@ def compare(a, b):
     left = {p['candidate_id'] for p in a.get('plan', [])}
     right = {p['candidate_id'] for p in b.get('plan', [])}
     return dict(schema_version=1, manifest_id=a['manifest_id'],
+                before_mode=a.get('mode'),after_mode=b.get('mode'),
                 candidate_delta=b.get('candidate_count', 0)-a.get('candidate_count', 0),
                 shared=sorted(left & right), removed=sorted(left-right), added=sorted(right-left),
+                before_sources=len({p['path'] for p in a.get('plan',[])}),
+                after_sources=len({p['path'] for p in b.get('plan',[])}),
                 quality_status='尚未評估',
-                note='Selection differences are not evidence of improved quality.')
+                note='Selection differences are not evidence of improved quality. Different review cohorts/strategies/IDs need temporal and human review.')
 
 
 def safe_output(output, data):
@@ -119,8 +144,7 @@ def run(data, output, index=None, analyze=False, model='gemma3:4b', target=180, 
     result = dict(schema_version=1, manifest_id=data['manifest_id'], status='ok',
                   mode='cache-replay' if index else 'legacy-live', quality_status='尚未評估',
                   errors=[], model=model, target_seconds=target, analyze_limit=analyze_limit)
-    result['revision'] = subprocess.run(['git','rev-parse','HEAD'], capture_output=True,
-                                        text=True, check=True).stdout.strip()
+    result.update(provenance())
     started = time.monotonic()
     try:
         if index:
@@ -185,6 +209,14 @@ def main():
     propose.add_argument('--seconds',type=float,default=180)
     propose.add_argument('--existing-plan',type=Path)
     propose.add_argument('--review-file',type=Path)
+    rendering=sub.add_parser('render-proposal')
+    rendering.add_argument('--manifest',type=Path,required=True)
+    rendering.add_argument('--plan',type=Path,required=True)
+    rendering.add_argument('--out',type=Path,required=True)
+    labels=sub.add_parser('annotations')
+    labels.add_argument('--manifest',type=Path,required=True)
+    labels.add_argument('--file',type=Path,required=True)
+    labels.add_argument('--out',type=Path,required=True)
     args = parser.parse_args()
     read = lambda p: json.loads(p.read_text(encoding='utf-8'))
     if args.command == 'manifest':
@@ -194,6 +226,29 @@ def main():
     elif args.command == 'run':
         if args.seconds <= 0 or args.analyze_limit < 0: parser.error('Invalid seconds/analyze-limit')
         return 0 if run(read(args.manifest), args.out, args.index, args.analyze, args.model, args.seconds,args.analyze_limit)['status']=='ok' else 1
+    elif args.command == 'annotations':
+        data=read(args.manifest);validated=validate_annotations(data,read(args.file))
+        if args.out.exists():raise ValueError('Annotation output already exists')
+        for item in data['media']:
+            if args.out.resolve().is_relative_to(Path(item['path']).parent):raise ValueError('Output under source directory')
+        save_json_atomic(args.out,validated)
+    elif args.command == 'render-proposal':
+        from cinematic_editor import render_v43
+        import math
+        data=read(args.manifest);verify_manifest(data);proposal=read(args.plan)
+        if proposal['manifest_id']!=data['manifest_id']:raise ValueError('Plan manifest mismatch')
+        paths={i['path'] for i in data['media']};plan=proposal['plan']
+        if not plan:raise ValueError('No recommended clips')
+        for p in plan:
+            if p['path'] not in paths:raise ValueError('Plan source outside manifest')
+            if not all(isinstance(p[k],(int,float)) and not isinstance(p[k],bool) and math.isfinite(p[k]) for k in ('start','seconds')):
+                raise ValueError('Invalid timing')
+            if p['start']<0 or p['seconds']<.5:raise ValueError('Invalid clip bounds')
+            if p['kind']=='video' and p['start']+p['seconds']>core.probe(p['path'])[0]+.005:raise ValueError('Clip exceeds source')
+            p['trim_locked']=True
+        output=safe_output(args.out,data)
+        render_v43(plan,output,sum(p['seconds'] for p in plan),transition=False,beat_sync=False)
+        verify_manifest(data)
     elif args.command == 'recommend':
         from recommendation_v16 import recommend
         data=read(args.assessments)
@@ -201,7 +256,8 @@ def main():
         review=read(args.review_file) if args.review_file else {}
         result=recommend(data['candidates'],args.seconds,existing=existing,
                          excluded_ids=review.get('excluded_ids',[]),excluded_paths=review.get('excluded_paths',[]))
-        result.update(manifest_id=data['manifest_id'],mode='v16-recommendation',quality_status='尚未評估')
+        result.update(manifest_id=data['manifest_id'],mode='v16-recommendation',quality_status='尚未評估',
+                      candidate_count=data.get('candidate_count',len(data['candidates'])),reviewed_count=len(data['candidates']))
         if args.out.exists():raise ValueError('Never overwrite an existing plan')
         save_json_atomic(args.out,result)
         args.out.with_suffix('.md').write_text(report_markdown(result),encoding='utf-8')
@@ -230,6 +286,7 @@ def main():
         result=dict(schema_version=SCHEMA_VERSION,prompt_version=PROMPT_VERSION,manifest_id=data['manifest_id'],
                     model=model,model_digest=digest,candidate_count=len(candidates),review_limit=args.limit,
                     candidates=[],errors=[],quality_status='尚未評估',mode='v16-assessment')
+        result.update(provenance())
         started=time.monotonic();cache=AssessmentCache(cache_path)
         try:
             for c in pending:
@@ -237,6 +294,7 @@ def main():
                 result['candidates'].append(dict(c,analysis=evaluated))
                 if evaluated['status']=='failed':result['errors'].append(dict(id=c['id'],error=evaluated['error']))
                 save_json_atomic(output/'result.json',result)
+                print(f"[V16 {len(result['candidates'])}/{len(pending)}] {c['id']} {evaluated['status']} cached={evaluated['cached']}",flush=True)
         finally:cache.close()
         result['analysis_seconds']=time.monotonic()-started
         result['status']='failed' if result['errors'] else 'ok'
@@ -249,6 +307,7 @@ def main():
         output = safe_output(args.out, data); started = time.monotonic()
         result = dict(schema_version=1, manifest_id=data['manifest_id'], mode=args.strategy,
                       candidates=[], errors=[], quality_status='尚未評估')
+        result.update(provenance())
         for item in data['media']:
             try: result['candidates'].extend(generate(item,args.strategy,technical=not args.no_technical))
             except Exception as exc: result['errors'].append(dict(path=item['path'],error=str(exc)))
