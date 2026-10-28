@@ -232,7 +232,7 @@ class EditorWindow(QMainWindow):
         planops.addWidget(self.button('移除',self.remove_plan))
         planops.addWidget(self.button('↑',lambda:self.move_plan(-1)))
         planops.addWidget(self.button('↓',lambda:self.move_plan(1)))
-        planops.addWidget(self.button('AI 重選',self.auto_plan))
+        planops.addWidget(self.button('AI 建議預覽',self.auto_plan))
         self.plan_status=QLabel('尚無片單');self.plan_status.setObjectName('muted');self.plan_status.setWordWrap(True)
         rl.addWidget(self.plan_status)
         splitter.addWidget(right);splitter.setSizes([690,480])
@@ -463,8 +463,14 @@ class EditorWindow(QMainWindow):
                     if isinstance(review,dict):
                         excluded_ids=set(review.get('excluded_ids',[]));excluded_paths=set(review.get('excluded_paths',[]))
                 picked=core.choose(db,self.get_length(),5.,int(self.min_score_box.currentText()),excluded_ids,excluded_paths)
+            if self.selected_ids:
+                preview=self.workspace_dir/'ai_recommendation_preview_v16.json'
+                store.save_json_atomic(preview,{'version':'1.6','plan':picked,
+                    'note':'推薦預覽；人工片單、順序與裁切保持原樣。'})
+                if not quiet:self.notice('AI 建議預覽',f'建議已儲存至 {preview}。既有片單保持原樣，可從素材列表手動加入。')
+                return bool(picked)
             self.selected_ids=[x['candidate_id'] for x in picked]
-            self.manual_trims={};self.persist_selection();self.refresh_plan()
+            self.persist_selection();self.refresh_plan()
             return bool(picked)
         except (OSError,ValueError,TypeError,sqlite3.Error) as exc:
             if not quiet:self.error('AI 推薦失敗',str(exc))
@@ -637,8 +643,6 @@ class EditorWindow(QMainWindow):
 
     def auto_plan(self):
         if self.running:return
-        if self.selected_ids and QMessageBox.question(self,'重建 AI 片單','重建將取代人工排序與裁切。確定繼續？')!=QMessageBox.StandardButton.Yes:return
-        self.snapshot()
         if not self.recommend():self.notice('目前沒有推薦','請先執行 AI 分析，或手動選擇未評分的候選。')
 
     def show_preview(self,item):

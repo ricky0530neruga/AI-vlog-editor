@@ -179,6 +179,12 @@ def main():
     assess.add_argument('--cache', type=Path)
     assess.add_argument('--model', default='gemma3:4b')
     assess.add_argument('--limit', type=int, default=12, help='0=all candidates; default bounded review')
+    propose=sub.add_parser('recommend')
+    propose.add_argument('--assessments',type=Path,required=True)
+    propose.add_argument('--out',type=Path,required=True)
+    propose.add_argument('--seconds',type=float,default=180)
+    propose.add_argument('--existing-plan',type=Path)
+    propose.add_argument('--review-file',type=Path)
     args = parser.parse_args()
     read = lambda p: json.loads(p.read_text(encoding='utf-8'))
     if args.command == 'manifest':
@@ -188,6 +194,17 @@ def main():
     elif args.command == 'run':
         if args.seconds <= 0 or args.analyze_limit < 0: parser.error('Invalid seconds/analyze-limit')
         return 0 if run(read(args.manifest), args.out, args.index, args.analyze, args.model, args.seconds,args.analyze_limit)['status']=='ok' else 1
+    elif args.command == 'recommend':
+        from recommendation_v16 import recommend
+        data=read(args.assessments)
+        existing=read(args.existing_plan)['plan'] if args.existing_plan else []
+        review=read(args.review_file) if args.review_file else {}
+        result=recommend(data['candidates'],args.seconds,existing=existing,
+                         excluded_ids=review.get('excluded_ids',[]),excluded_paths=review.get('excluded_paths',[]))
+        result.update(manifest_id=data['manifest_id'],mode='v16-recommendation',quality_status='尚未評估')
+        if args.out.exists():raise ValueError('Never overwrite an existing plan')
+        save_json_atomic(args.out,result)
+        args.out.with_suffix('.md').write_text(report_markdown(result),encoding='utf-8')
     elif args.command == 'assess':
         from assessment_v16 import AssessmentCache, model_identity, SCHEMA_VERSION, PROMPT_VERSION
         data=read(args.manifest); verify_manifest(data); source=read(args.candidates)
